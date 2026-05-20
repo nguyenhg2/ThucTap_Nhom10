@@ -1,9 +1,8 @@
-import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .proxy_routes import router as proxy_router
+import uvicorn
 
-app=FastAPI(title="API Gateway")
+app=FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
@@ -13,7 +12,5 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(proxy_router)
-
 if __name__=="__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="localhost", port=8001)
