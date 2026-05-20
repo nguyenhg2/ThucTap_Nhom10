@@ -1,0 +1,93 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: webcourse-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: webcourse-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  backend:
+    build: ./backend/core-service
+    container_name: webcourse-backend
+    ports:
+      - "8001:8001"
+    environment:
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017}
+      - MONGODB_DB=${MONGODB_DB:-codecamp_core}
+      - PAYMENT_MONGODB_DB=${PAYMENT_MONGODB_DB:-codecamp_payment}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - JWT_SECRET=${JWT_SECRET:-dev-secret}
+      - CORS_ORIGINS=*
+    restart: unless-stopped
+    depends_on:
+      - mongo
+      - redis
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: webcourse-frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - VITE_API_URL=http://localhost:8001
+      - VITE_PAYMENT_API_URL=http://localhost:8002
+    command: npm run dev -- --host 0.0.0.0
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - payment
+
+  seed:
+    build: ./backend/core-service
+    container_name: webcourse-seed
+    working_dir: /app
+    command: python -c "import sys; sys.path.insert(0,'/seed'); exec(open('/seed/seed.py').read())"
+    volumes:
+      - ./backend:/seed
+    environment:
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017}
+      - MONGODB_DB=${MONGODB_DB:-codecamp_core}
+    profiles:
+      - seed
+    depends_on:
+      - mongo
+
+  payment:
+    build: ./backend/payment-service
+    container_name: webcourse-payment
+    ports:
+      - "8002:8002"
+    environment:
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - PORT=8002
+      - JWT_SECRET=${JWT_SECRET:-dev-secret}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME:-}
+      - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY:-}
+      - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET:-}
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - mongo
+      - redis
+
+volumes:
+  mongo_data:
