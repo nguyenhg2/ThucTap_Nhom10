@@ -1,4 +1,5 @@
 import uvicorn
+import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from .proxy_routes import router as proxy_router
@@ -16,4 +17,4 @@ app.add_middleware(
 app.include_router(proxy_router)
 
 if __name__=="__main__":
-    uvicorn.run(app, host="localhost", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
