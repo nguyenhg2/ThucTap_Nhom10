@@ -1,13 +1,4 @@
 services:
-  mongo:
-    image: mongo:7
-    container_name: webcourse-mongo
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
-    restart: unless-stopped
-
   redis:
     image: redis:7-alpine
     container_name: webcourse-redis
@@ -15,22 +6,40 @@ services:
       - "6379:6379"
     restart: unless-stopped
 
-  backend:
+  core:
     build: ./backend/core-service
-    container_name: webcourse-backend
+    container_name: webcourse-core
     ports:
       - "8001:8001"
     environment:
-      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017}
+      - MONGODB_URI=${MONGODB_URI:?MONGODB_URI is required}
       - MONGODB_DB=${MONGODB_DB:-codecamp_core}
       - PAYMENT_MONGODB_DB=${PAYMENT_MONGODB_DB:-codecamp_payment}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - PAYMENT_SERVICE_URL=http://payment:8002
+      - PAYMENT_INTERNAL_TOKEN=${PAYMENT_INTERNAL_TOKEN:-dev-internal-token}
+      - REDIS_URL=redis://redis:6379
       - JWT_SECRET=${JWT_SECRET:-dev-secret}
       - CORS_ORIGINS=*
     restart: unless-stopped
     depends_on:
-      - mongo
       - redis
+
+  api-gateway:
+    build: ./backend/api-gateway
+    container_name: webcourse-api-gateway
+    ports:
+      - "8000:8000"
+    environment:
+      - CORE_SERVICE_URL=http://core:8001
+      - PAYMENT_SERVICE_URL=http://payment:8002
+      - MEDIA_SERVICE_URL=http://media:8004
+      - BLOG_SERVICE_URL=http://blog:8003
+    restart: unless-stopped
+    depends_on:
+      - core
+      - payment
+      - media
+      - blog
 
   frontend:
     build:
@@ -44,30 +53,36 @@ services:
       - /app/node_modules
     environment:
       - NODE_ENV=development
-      - VITE_API_URL=http://localhost:8001
-      - VITE_PAYMENT_API_URL=http://localhost:8002
+      - VITE_API_URL=http://localhost:8000/core
+      - VITE_PAYMENT_API_URL=http://localhost:8000/payment
+      - VITE_MEDIA_API_URL=http://localhost:8000/media
+      - VITE_BLOG_API_URL=http://localhost:8000/blog
     command: npm run dev -- --host 0.0.0.0
     stdin_open: true
     tty: true
     restart: unless-stopped
     depends_on:
-      - backend
-      - payment
+      - api-gateway
 
-  seed:
-    build: ./backend/core-service
-    container_name: webcourse-seed
-    working_dir: /app
-    command: python -c "import sys; sys.path.insert(0,'/seed'); exec(open('/seed/seed.py').read())"
-    volumes:
-      - ./backend:/seed
+  blog:
+    build: ./backend/blog-service
+    container_name: webcourse-blog
+    ports:
+      - "8003:8003"
     environment:
-      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017}
-      - MONGODB_DB=${MONGODB_DB:-codecamp_core}
-    profiles:
-      - seed
-    depends_on:
-      - mongo
+      - MONGODB_URI=${MONGODB_URI:?MONGODB_URI is required}
+      - BLOG_MONGODB_DB=${BLOG_MONGODB_DB:-codecamp_php}
+      - JWT_SECRET=${JWT_SECRET:-dev-secret}
+    command: >
+      sh -c 'for key in MONGODB_URI BLOG_MONGODB_DB JWT_SECRET; do
+        value=$$(printenv "$$key");
+        if [ -n "$$value" ]; then
+          sed -i "/^$${key}=/d" .env;
+          printf "\n%s=%s\n" "$$key" "$$value" >> .env;
+        fi;
+      done;
+      php artisan config:clear && php artisan serve --host=0.0.0.0 --port=8003'
+    restart: unless-stopped
 
   payment:
     build: ./backend/payment-service
@@ -75,19 +90,23 @@ services:
     ports:
       - "8002:8002"
     environment:
-      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - MONGODB_URI=${MONGODB_URI:?MONGODB_URI is required}
+      - PAYMENT_MONGODB_DB=${PAYMENT_MONGODB_DB:-codecamp_payment}
+      - PAYMENT_INTERNAL_TOKEN=${PAYMENT_INTERNAL_TOKEN:-dev-internal-token}
       - PORT=8002
       - JWT_SECRET=${JWT_SECRET:-dev-secret}
-      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:?STRIPE_SECRET_KEY is required}
+    restart: unless-stopped
+
+  media:
+    build: ./backend/media-service
+    container_name: webcourse-media
+    ports:
+      - "8004:8004"
+    environment:
+      - PORT=8004
+      - JWT_SECRET=${JWT_SECRET:-dev-secret}
       - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME:-}
       - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY:-}
       - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET:-}
     restart: unless-stopped
-    depends_on:
-      - backend
-      - mongo
-      - redis
-
-volumes:
-  mongo_data:
