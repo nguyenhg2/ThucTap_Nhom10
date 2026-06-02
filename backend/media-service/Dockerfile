@@ -8,6 +8,6 @@ RUN go mod download
 COPY . .
 RUN go build -o main ./cmd/main.go
 
-EXPOSE 8002
+EXPOSE 8004
 
 CMD ["./main"]
