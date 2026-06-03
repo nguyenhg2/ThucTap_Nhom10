@@ -15,7 +15,8 @@ const navLinks = [
 export default function Header() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const { user, logout } = useAuth();
+  const { user, logout, cartCount } = useAuth();
+  const isStudent = !user || user.role === "student";
 
   const linkClass = ({ isActive }) =>
     `text-base font-medium transition-colors ${isActive ? "text-primary" : "text-secondary hover:text-primary"}`;
@@ -39,9 +40,16 @@ export default function Header() {
           <button className="p-2 text-gray-600 hover:text-primary transition-colors">
             <FiSearch size={20} />
           </button>
-          <Link to="/gio-hang" className="p-2 text-gray-600 hover:text-primary transition-colors">
-            <FiShoppingCart size={20} />
-          </Link>
+          {isStudent && (
+            <Link to="/gio-hang" className="relative p-2 text-gray-600 hover:text-primary transition-colors">
+              <FiShoppingCart size={20} />
+              {cartCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full bg-primary text-white text-[11px] font-semibold flex items-center justify-center">
+                  {cartCount > 99 ? "99+" : cartCount}
+                </span>
+              )}
+            </Link>
+          )}
 
           {user ? (
             <div className="relative">
@@ -57,14 +65,12 @@ export default function Header() {
                   <Link to="/trang-ca-nhan" onClick={() => setDropdownOpen(false)} className="flex items-center gap-3 px-4 py-3 text-sm text-secondary hover:bg-gray-50">
                     <FiUser size={16} /> Trang cá nhân
                   </Link>
-                  <Link to="/khoa-hoc-cua-toi" onClick={() => setDropdownOpen(false)} className="flex items-center gap-3 px-4 py-3 text-sm text-secondary hover:bg-gray-50">
+                  <Link to="/khoa-hoc-cua-toi" onClick={() => setDropdownOpen(false)} className={`${user.role === "student" ? "flex" : "hidden"} items-center gap-3 px-4 py-3 text-sm text-secondary hover:bg-gray-50`}>
                     <FiBookOpen size={16} /> Khóa học của tôi
                   </Link>
-                  {user.role !== "student" && (
-                    <Link to="/dashboard" onClick={() => setDropdownOpen(false)} className="flex items-center gap-3 px-4 py-3 text-sm text-secondary hover:bg-gray-50">
-                      <FiBookOpen size={16} /> Dashboard
-                    </Link>
-                  )}
+                  <Link to="/dashboard" onClick={() => setDropdownOpen(false)} className="flex items-center gap-3 px-4 py-3 text-sm text-secondary hover:bg-gray-50">
+                    <FiBookOpen size={16} /> Bảng điều khiển
+                  </Link>
                   <hr className="my-1 border-gray-100" />
                   <button onClick={() => { logout(); setDropdownOpen(false); }} className="flex items-center gap-3 px-4 py-3 text-sm text-error hover:bg-gray-50 w-full text-left">
                     <FiLogOut size={16} /> Đăng xuất
@@ -96,14 +102,15 @@ export default function Header() {
               {link.label}
             </NavLink>
           ))}
-          <Link to="/gio-hang" onClick={() => setMobileOpen(false)} className="text-base font-medium text-secondary">
+          {isStudent && <Link to="/gio-hang" onClick={() => setMobileOpen(false)} className="text-base font-medium text-secondary">
             Giỏ hàng
-          </Link>
+          </Link>}
           <hr className="border-gray-100" />
           {user ? (
             <>
               <Link to="/trang-ca-nhan" onClick={() => setMobileOpen(false)} className="text-sm text-secondary py-2">Trang cá nhân</Link>
-              <Link to="/khoa-hoc-cua-toi" onClick={() => setMobileOpen(false)} className="text-sm text-secondary py-2">Khóa học của tôi</Link>
+              {user.role === "student" && <Link to="/khoa-hoc-cua-toi" onClick={() => setMobileOpen(false)} className="text-sm text-secondary py-2">Khóa học của tôi</Link>}
+              <Link to="/dashboard" onClick={() => setMobileOpen(false)} className="text-sm text-secondary py-2">Bảng điều khiển</Link>
               <button onClick={() => { logout(); setMobileOpen(false); }} className="text-sm text-error py-2 text-left">Đăng xuất</button>
             </>
           ) : (

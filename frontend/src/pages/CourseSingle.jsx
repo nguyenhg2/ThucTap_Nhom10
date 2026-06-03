@@ -15,7 +15,8 @@ import {
 import Breadcrumb from "../components/layout/Breadcrumb";
 import CommentForm from "../components/ui/CommentForm";
 import CommentList from "../components/ui/CommentList";
-import { addCartAPI, getCourseBySlugAPI, getCourseReviewsAPI } from "../services/api";
+import { addCartAPI, getCourseBySlugAPI, getCourseReviewsAPI, getMyCoursesAPI } from "../services/api";
+import { useAuth } from "../context/AuthContext";
 
 const LEVEL_MAP = {
   beginner: "Người mới",
@@ -45,15 +46,31 @@ function formatDuration(seconds) {
   return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
 }
 
+function displayLessonTitle(section, lesson) {
+  const sectionOrder = Number(section?.order || 1);
+  const lessonOrder = Number(lesson?.order || 1);
+  const cleanTitle = String(lesson?.title || "")
+    .replace(/^(Bài|Bai|Lesson)\s+\d+(?:\.\d+)+\s*[-–—:]\s*/i, "")
+    .replace(/^(Bài|Bai|Lesson)\s+\d+(?:\.\d+)+\s*/i, "")
+    .trim();
+
+  return cleanTitle
+    ? `Bài ${sectionOrder}.${lessonOrder} - ${cleanTitle}`
+    : `Bài ${sectionOrder}.${lessonOrder}`;
+}
+
 export default function CourseSingle() {
   const { slug } = useParams();
   const navigate = useNavigate();
+  const { user, refreshCartCount } = useAuth();
   const [course, setCourse] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("overview");
   const [expandedSections, setExpandedSections] = useState({});
   const [expandedFaqs, setExpandedFaqs] = useState({});
   const [reviews, setReviews] = useState([]);
+  const [ownedCourseIds, setOwnedCourseIds] = useState(new Set());
+  const [cartMessage, setCartMessage] = useState("");
 
   useEffect(() => {
     getCourseBySlugAPI(slug)
@@ -68,6 +85,17 @@ export default function CourseSingle() {
       .finally(() => setLoading(false));
   }, [slug]);
 
+  useEffect(() => {
+    if (!user) {
+      setOwnedCourseIds(new Set());
+      return;
+    }
+
+    getMyCoursesAPI()
+      .then((courses) => setOwnedCourseIds(new Set(courses.map((item) => item._id))))
+      .catch(() => setOwnedCourseIds(new Set()));
+  }, [user]);
+
   function toggleSection(i) {
     setExpandedSections((prev) => ({ ...prev, [i]: !prev[i] }));
   }
@@ -77,8 +105,29 @@ export default function CourseSingle() {
   }
 
   async function addToCart() {
-    await addCartAPI(course._id);
-    navigate("/gio-hang");
+    setCartMessage("");
+
+    if (!user) {
+      navigate("/dang-nhap");
+      return;
+    }
+
+    if (user.role !== "student") {
+      setCartMessage("Chỉ tài khoản học viên mới có thể thêm khóa học vào giỏ hàng.");
+      return;
+    }
+
+    try {
+      await addCartAPI(course._id);
+      await refreshCartCount();
+      navigate("/gio-hang");
+    } catch (err) {
+      if (err.response?.status === 401) {
+        navigate("/dang-nhap");
+        return;
+      }
+      setCartMessage(err.response?.data?.detail || "Không thêm được khóa học vào giỏ hàng.");
+    }
   }
 
   if (loading) {
@@ -109,6 +158,9 @@ export default function CourseSingle() {
         0
       )
     : 0;
+  const firstLesson = (course.sections || []).flatMap((section) => section.lessons || [])[0];
+  const hasCourseAccess = ownedCourseIds.has(course._id);
+  const learnPath = firstLesson ? `/khoa-hoc/${slug}/hoc/${firstLesson._id}` : `/khoa-hoc/${slug}`;
 
   const tabs = [
     { id: "overview", label: "Tổng quan" },
@@ -211,13 +263,15 @@ export default function CourseSingle() {
                         </button>
                         {expandedSections[i] && section.lessons && (
                           <div className="divide-y divide-gray-100">
-                            {section.lessons.map((lesson) => (
+                            {section.lessons.map((lesson) => {
+                              const canOpenLesson = hasCourseAccess || lesson.is_free_preview;
+                              return (
                               <div
                                 key={lesson._id}
                                 className="flex items-center justify-between px-6 py-3"
                               >
                                 <div className="flex items-center gap-3">
-                                  {lesson.is_free_preview ? (
+                                  {canOpenLesson ? (
                                     <FiPlay
                                       size={14}
                                       className="text-primary"
@@ -228,13 +282,13 @@ export default function CourseSingle() {
                                       className="text-gray-400"
                                     />
                                   )}
-                                  {lesson.is_free_preview ? (
+                                  {canOpenLesson ? (
                                     <Link to={`/khoa-hoc/${slug}/hoc/${lesson._id}`} className="text-sm text-gray-600 hover:text-primary">
-                                      {lesson.title}
+                                      {displayLessonTitle(section, lesson)}
                                     </Link>
                                   ) : (
                                     <span className="text-sm text-gray-600">
-                                      {lesson.title}
+                                      {displayLessonTitle(section, lesson)}
                                     </span>
                                   )}
                                   {lesson.is_free_preview && (
@@ -247,7 +301,8 @@ export default function CourseSingle() {
                                   {formatDuration(lesson.duration)}
                                 </span>
                               </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                       </div>
@@ -366,13 +421,25 @@ export default function CourseSingle() {
                 alt={course.title}
                 className="w-full rounded-lg"
               />
-              <div className="flex items-center gap-3">
-                <span className="text-2xl font-bold text-primary">
-                  {priceText}
-                </span>
-              </div>
+              {!hasCourseAccess && (
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl font-bold text-primary">
+                    {priceText}
+                  </span>
+                </div>
+              )}
+              {hasCourseAccess && (
+                <Link
+                  to={learnPath}
+                  className="w-full py-3 bg-success text-white font-semibold rounded-lg text-center hover:bg-green-600 transition-colors"
+                >
+                  Vào học
+                </Link>
+              )}
+              {!hasCourseAccess && (!user || user.role === "student") && (
+                <>
               <Link
-                to="/thanh-toan"
+                to={user ? "/thanh-toan" : "/dang-nhap"}
                 state={{ courseId: course._id, title: course.title, price: course.price, thumbnail: course.thumbnail }}
                 className="w-full py-3 bg-primary text-white font-semibold rounded-lg text-center hover:bg-orange-600 transition-colors"
               >
@@ -381,6 +448,14 @@ export default function CourseSingle() {
               <button onClick={addToCart} className="w-full py-3 border border-primary text-primary font-semibold rounded-lg text-center hover:bg-primary-light transition-colors">
                 Thêm vào giỏ hàng
               </button>
+                </>
+              )}
+              {user && user.role !== "student" && (
+                <p className="text-sm text-gray-500">
+                  Tài khoản quản trị/giảng viên/vận hành không thể mua khóa học.
+                </p>
+              )}
+              {cartMessage && <p className="text-sm text-red-500">{cartMessage}</p>}
               <div className="flex flex-col gap-3 text-sm text-gray-600">
                 {course.duration && (
                   <div className="flex justify-between">
