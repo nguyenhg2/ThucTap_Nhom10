@@ -1,4 +1,5 @@
 import uvicorn
+import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from .proxy_routes import router as proxy_router
