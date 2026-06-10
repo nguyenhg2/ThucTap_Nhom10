@@ -1,55 +1,64 @@
 from fastapi import APIRouter, Depends, HTTPException
-from app.db.mongo import get_db, oid, serialize_doc, serialize_docs
 from bson import ObjectId
 from app.core.deps import require_role
+from app.models.sections import Section, UpdateSection
+from app.db.mongo import get_db, oid, serialize_doc
 
 router = APIRouter()
 
-@router.get("/api/roadmaps")
-async def list_roadmaps(db=Depends(get_db)):
-    roadmaps = await db["roadmaps"].find({}).sort("order", 1).to_list(length=100)
-    return serialize_docs(roadmaps)
 
-@router.get("/api/roadmaps/{roadmap_id}")
-async def get_roadmap(roadmap_id: str, db=Depends(get_db)):
-    query = {"slug": roadmap_id}
-    if ObjectId.is_valid(roadmap_id):
-        query = {"_id": oid(roadmap_id)}
+async def _ensure_can_manage_course(db, course_id: str, user: dict):
+    if not ObjectId.is_valid(course_id):
+        raise HTTPException(status_code=400, detail="course_id không hợp lệ")
+    course = await db["courses"].find_one({"_id": oid(course_id)})
+    if not course:
+        raise HTTPException(status_code=404, detail="Không tìm thấy khóa học")
+    if user.get("role") != "admin" and course.get("instructor_id") != user["_id"]:
+        raise HTTPException(status_code=403, detail="Không đủ quyền thực hiện")
+    return course
 
-    roadmap = await db["roadmaps"].find_one(query)
-    if not roadmap:
-        raise HTTPException(status_code=404, detail="Không tìm thấy lộ trình")
 
-    roadmap = serialize_doc(roadmap)
-    courses = []
-    for course_id in roadmap.get("course_ids", []):
-        course = await db["courses"].find_one({"_id": oid(course_id)})
-        if course:
-            courses.append(serialize_doc(course))
-    roadmap["courses"] = courses
-    return roadmap
+@router.post("/api/courses/{course_id}/sections")
+async def create_section(course_id: str, payload: Section, db=Depends(get_db), user=Depends(require_role("admin", "instructor"))):
+    await _ensure_can_manage_course(db, course_id, user)
+    new_section = {
+        "course_id": course_id,
+        "title": payload.title,
+        "order": payload.order
+    }
+    result = await db["sections"].insert_one(new_section)
+    new_section = await db["sections"].find_one({"_id": result.inserted_id})
+    return serialize_doc(new_section)
 
-@router.post("/api/roadmaps")
-async def create_roadmap(roadmap: dict, db=Depends(get_db), user=Depends(require_role("admin"))):
-    result = await db["roadmaps"].insert_one(roadmap)
-    created_roadmap = await db["roadmaps"].find_one({"_id": result.inserted_id})
-    return serialize_doc(created_roadmap)
+@router.put("/api/sections/{section_id}")
+async def update_section(section_id: str, payload: UpdateSection, db=Depends(get_db), user=Depends(require_role("admin", "instructor"))):
+    if not ObjectId.is_valid(section_id):
+        raise HTTPException(status_code=400, detail="section_id không hợp lệ")
+    section = await db["sections"].find_one({"_id": oid(section_id)})
+    if not section:
+        raise HTTPException(status_code=404, detail="Không tìm thấy phần học")
+    await _ensure_can_manage_course(db, section["course_id"], user)
+    result = await db["sections"].update_one(
+        {"_id": oid(section_id)},
+        {"$set": {
+            "title": payload.title,
+            "order": payload.order
+        }}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Không tìm thấy section")
+    updated_section = await db["sections"].find_one({"_id": oid(section_id)})
+    return serialize_doc(updated_section)
 
-@router.put("/api/roadmaps/{roadmap_id}")
-async def update_roadmap(roadmap_id: str, roadmap: dict, db=Depends(get_db), user=Depends(require_role("admin"))):
-    if not ObjectId.is_valid(roadmap_id):
-        raise HTTPException(status_code=400, detail="ID lộ trình không hợp lệ")
-    result = await db["roadmaps"].update_one({"_id": oid(roadmap_id)}, {"$set": roadmap})
-    if result.modified_count == 0:
-        raise HTTPException(status_code=404, detail="Không tìm thấy lộ trình")
-    updated_roadmap = await db["roadmaps"].find_one({"_id": oid(roadmap_id)})
-    return serialize_doc(updated_roadmap)
-
-@router.delete("/api/roadmaps/{roadmap_id}")
-async def delete_roadmap(roadmap_id: str, db=Depends(get_db), user=Depends(require_role("admin"))):
-    if not ObjectId.is_valid(roadmap_id):
-        raise HTTPException(status_code=400, detail="ID lộ trình không hợp lệ")
-    result = await db["roadmaps"].delete_one({"_id": oid(roadmap_id)})
+@router.delete("/api/sections/{section_id}")
+async def delete_section(section_id: str, db=Depends(get_db), user=Depends(require_role("admin", "instructor"))):
+    if not ObjectId.is_valid(section_id):
+        raise HTTPException(status_code=400, detail="section_id không hợp lệ")
+    section = await db["sections"].find_one({"_id": oid(section_id)})
+    if not section:
+        raise HTTPException(status_code=404, detail="Không tìm thấy phần học")
+    await _ensure_can_manage_course(db, section["course_id"], user)
+    result = await db["sections"].delete_one({"_id": oid(section_id)})
     if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Không tìm thấy lộ trình")
-    return {"message": "Đã xóa lộ trình"}
+        raise HTTPException(status_code=404, detail="Không tìm thấy phần học")
+    return {"message": "Phần học đã được xóa"}
