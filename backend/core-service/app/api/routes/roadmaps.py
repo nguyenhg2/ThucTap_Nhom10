@@ -5,10 +5,12 @@ from app.core.deps import require_role
 
 router = APIRouter()
 
+
 @router.get("/api/roadmaps")
 async def list_roadmaps(db=Depends(get_db)):
     roadmaps = await db["roadmaps"].find({}).sort("order", 1).to_list(length=100)
     return serialize_docs(roadmaps)
+
 
 @router.get("/api/roadmaps/{roadmap_id}")
 async def get_roadmap(roadmap_id: str, db=Depends(get_db)):

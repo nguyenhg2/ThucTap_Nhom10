@@ -17,27 +17,13 @@ import CommentForm from "../components/ui/CommentForm";
 import CommentList from "../components/ui/CommentList";
 import { addCartAPI, getCourseBySlugAPI, getCourseReviewsAPI, getMyCoursesAPI } from "../services/api";
 import { useAuth } from "../context/AuthContext";
+import useSiteContent from "../hooks/useSiteContent";
 
 const LEVEL_MAP = {
   beginner: "Người mới",
   intermediate: "Trung cấp",
   advanced: "Nâng cao",
 };
-
-const FAQS = [
-  {
-    q: "Khóa học này phù hợp với ai?",
-    a: "Khóa học phù hợp với người mới bắt đầu lập trình web hoặc những ai muốn nâng cao kỹ năng.",
-  },
-  {
-    q: "Tôi cần kiến thức gì trước khi học?",
-    a: "Bạn cần có kiến thức cơ bản về HTML, CSS và JavaScript.",
-  },
-  {
-    q: "Khóa học có cập nhật không?",
-    a: "Có, khóa học được cập nhật thường xuyên để theo kịp các phiên bản mới nhất.",
-  },
-];
 
 function formatDuration(seconds) {
   if (!seconds) return "";
@@ -71,6 +57,8 @@ export default function CourseSingle() {
   const [reviews, setReviews] = useState([]);
   const [ownedCourseIds, setOwnedCourseIds] = useState(new Set());
   const [cartMessage, setCartMessage] = useState("");
+  const { content: courseFaqContent } = useSiteContent("course_faqs", { items: [] });
+  const faqs = courseFaqContent?.items || [];
 
   useEffect(() => {
     getCourseBySlugAPI(slug)
@@ -132,7 +120,7 @@ export default function CourseSingle() {
 
   if (loading) {
     return (
-      <div className="max-w-[1290px] mx-auto px-5 py-20 text-center text-gray-500">
+      <div className="max-w-322.5 mx-auto px-5 py-20 text-center text-gray-500">
         Đang tải khóa học...
       </div>
     );
@@ -140,7 +128,7 @@ export default function CourseSingle() {
 
   if (!course) {
     return (
-      <div className="max-w-[1290px] mx-auto px-5 py-20 text-center text-gray-500">
+      <div className="max-w-322.5 mx-auto px-5 py-20 text-center text-gray-500">
         Không tìm thấy khóa học.
       </div>
     );
@@ -179,7 +167,7 @@ export default function CourseSingle() {
           { label: course.title },
         ]}
       />
-      <div className="max-w-[1290px] mx-auto px-5 py-10">
+      <div className="max-w-322.5 mx-auto px-5 py-10">
         <div className="flex flex-col lg:flex-row gap-10">
           <div className="flex-1">
             <span className="text-sm font-medium text-primary bg-primary-light px-3 py-1 rounded-full">
@@ -348,7 +336,7 @@ export default function CourseSingle() {
 
               {activeTab === "faqs" && (
                 <div className="flex flex-col gap-4">
-                  {FAQS.map((faq, i) => (
+                  {faqs.map((faq, i) => (
                     <div
                       key={i}
                       className="border border-gray-100 rounded-xl overflow-hidden"

@@ -67,7 +67,7 @@ export default function Profile() {
       })
       .catch(() => {
         if (mounted) {
-          setError("Không tải được dữ liệu hồ sơ từ database.");
+      setError("Không tải được dữ liệu hồ sơ từ cơ sở dữ liệu.");
         }
       })
       .finally(() => {
@@ -114,7 +114,7 @@ export default function Profile() {
   return (
     <>
       <Breadcrumb items={[{ label: "Trang chủ", to: "/" }, { label: "Trang cá nhân" }]} />
-      <div className="max-w-[1290px] mx-auto px-5 py-10">
+      <div className="max-w-322.5 mx-auto px-5 py-10">
         {error && <div className="mb-6 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>}
         <div className="flex flex-col lg:flex-row gap-10">
           <div className="lg:w-80 shrink-0">
@@ -132,7 +132,7 @@ export default function Profile() {
               </button>
               {user.role !== "student" && (
                 <Link to="/dashboard" className="mt-3 inline-block text-sm font-semibold text-primary hover:underline">
-                  Vào dashboard
+                  {"V\u00e0o b\u1ea3ng \u0111i\u1ec1u khi\u1ec3n"}
                 </Link>
               )}
             </div>
