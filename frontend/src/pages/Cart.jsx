@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { FiTrash2, FiShoppingCart, FiTag } from "react-icons/fi";
 import Breadcrumb from "../components/layout/Breadcrumb";
 import { getCartAPI, removeCartAPI, validateCouponAPI } from "../services/api";
+import { useAuth } from "../context/AuthContext";
 
 function formatPrice(value) {
   return Number(value || 0).toLocaleString("vi-VN") + "đ";
@@ -10,6 +11,7 @@ function formatPrice(value) {
 
 export default function Cart() {
   const navigate = useNavigate();
+  const { setCartCount, refreshCartCount } = useAuth();
   const [items, setItems] = useState([]);
   const [coupon, setCoupon] = useState("");
   const [discount, setDiscount] = useState(0);
@@ -17,16 +19,28 @@ export default function Cart() {
 
   useEffect(() => {
     getCartAPI()
-      .then((data) => setItems(data.items || []))
-      .catch(() => setItems([]));
-  }, []);
+      .then((data) => {
+        const nextItems = data.items || [];
+        setItems(nextItems);
+        setCartCount(nextItems.length);
+      })
+      .catch(() => {
+        setItems([]);
+        setCartCount(0);
+      });
+  }, [setCartCount]);
 
   const total = useMemo(() => items.reduce((sum, item) => sum + Number(item.price || 0), 0), [items]);
   const finalTotal = Math.max(total - discount, 0);
 
   async function removeItem(courseId) {
     await removeCartAPI(courseId);
-    setItems((current) => current.filter((item) => item._id !== courseId));
+    setItems((current) => {
+      const nextItems = current.filter((item) => item._id !== courseId);
+      setCartCount(nextItems.length);
+      return nextItems;
+    });
+    refreshCartCount();
   }
 
   async function applyCoupon() {
@@ -48,8 +62,10 @@ export default function Cart() {
         courseId: items[0]?._id,
         title: items.length === 1 ? items[0].title : items.length + " khóa học",
         thumbnail: items[0]?.thumbnail,
-        price: finalTotal,
-        couponCode: coupon,
+        price: total,
+        discount,
+        finalTotal,
+        couponCode: discount > 0 ? coupon : "",
       },
     });
   }
@@ -57,7 +73,7 @@ export default function Cart() {
   return (
     <>
       <Breadcrumb items={[{ label: "Trang chủ", to: "/" }, { label: "Giỏ hàng" }]} />
-      <div className="max-w-[1290px] mx-auto px-5 py-10">
+      <div className="max-w-322.5 mx-auto px-5 py-10">
         <h1 className="text-2xl font-heading font-bold text-secondary mb-8">Giỏ hàng</h1>
         {items.length === 0 ? (
           <div className="text-center py-20 border border-gray-100 rounded-lg">

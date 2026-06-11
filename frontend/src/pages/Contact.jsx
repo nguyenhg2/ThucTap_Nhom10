@@ -2,16 +2,25 @@ import { useState } from "react";
 import { FiMapPin, FiPhone, FiMail, FiClock } from "react-icons/fi";
 import Breadcrumb from "../components/layout/Breadcrumb";
 import { sendContactAPI } from "../services/api";
+import useSiteContent from "../hooks/useSiteContent";
 
-const contactInfo = [
-  { icon: <FiMapPin size={24} />, title: "Địa chỉ", detail: "236 Hoàng Quốc Việt, Phường Nghĩa Đô, Hà Nội" },
-  { icon: <FiPhone size={24} />, title: "Điện thoại", detail: "+(123) 2500-567-8988" },
-  { icon: <FiMail size={24} />, title: "Email", detail: "supportlms@gmail.com" },
-  { icon: <FiClock size={24} />, title: "Giờ làm việc", detail: "Thứ 2 - Thứ 6: 8:00 - 17:30" },
-];
+const CONTACT_ICONS = {
+  "map-pin": <FiMapPin size={24} />,
+  phone: <FiPhone size={24} />,
+  mail: <FiMail size={24} />,
+  clock: <FiClock size={24} />,
+};
 
 export default function Contact() {
   const [form, setForm] = useState({ name: "", email: "", phone: "", subject: "", message: "" });
+  const { content } = useSiteContent("contact_info", { items: [] });
+  const contactInfo = content?.items || [];
+  const map = content?.map || {};
+  const address = map.address || "";
+  const mapQuery = encodeURIComponent(address);
+  const mapLat = map.lat || 21.0466213;
+  const mapLon = map.lon || 105.7864498;
+  const mapBbox = map.bbox || "105.7814498%2C21.0416213%2C105.7914498%2C21.0516213";
 
   function handleChange(e) {
     const { name, value } = e.target;
@@ -21,14 +30,14 @@ export default function Contact() {
   async function handleSubmit(e) {
     e.preventDefault();
     await sendContactAPI(form);
-    alert("Tin nhắn đã được lưu vào database.");
+    alert("Tin nhắn đã được lưu vào cơ sở dữ liệu.");
     setForm({ name: "", email: "", phone: "", subject: "", message: "" });
   }
 
   return (
     <>
       <Breadcrumb items={[{ label: "Trang chủ", to: "/" }, { label: "Liên hệ" }]} />
-      <div className="max-w-[1290px] mx-auto px-5 py-10">
+      <div className="max-w-322.5 mx-auto px-5 py-10">
         <div className="text-center mb-12">
           <h1 className="text-3xl font-heading font-bold text-secondary">Liên hệ với chúng tôi</h1>
           <p className="text-gray-600 mt-3 max-w-xl mx-auto">Nếu bạn có bất kỳ câu hỏi nào, đừng ngần ngại liên hệ với chúng tôi</p>
@@ -37,17 +46,33 @@ export default function Contact() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
           {contactInfo.map((item) => (
             <div key={item.title} className="flex flex-col items-center text-center p-6 rounded-xl border border-gray-100">
-              <span className="text-primary mb-3">{item.icon}</span>
+              <span className="text-primary mb-3">{CONTACT_ICONS[item.icon] || CONTACT_ICONS["map-pin"]}</span>
               <h3 className="text-base font-semibold text-secondary">{item.title}</h3>
-              <p className="text-sm text-gray-600 mt-1">{item.detail}</p>
+              <p className="text-sm text-gray-600 mt-1">{item.content}</p>
             </div>
           ))}
         </div>
 
-        <div className="bg-gray-50 rounded-xl p-8 mb-12 flex items-center justify-center h-64">
-          <div className="text-center text-gray-400">
-            <FiMapPin size={40} className="mx-auto mb-3" />
-            <p className="text-sm">236 Hoàng Quốc Việt, Phường Nghĩa Đô, Hà Nội</p>
+        <div className="mb-12 overflow-hidden rounded-xl border border-gray-100 bg-gray-50">
+          <iframe
+            title="Bản đồ CodeCamp"
+            src={`https://www.openstreetmap.org/export/embed.html?bbox=${mapBbox}&layer=mapnik&marker=${mapLat}%2C${mapLon}`}
+            className="h-80 w-full border-0"
+            loading="lazy"
+          />
+          <div className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="flex items-center gap-2 text-sm font-medium text-gray-700">
+              <FiMapPin className="text-primary" size={16} />
+              {address}
+            </p>
+            <a
+              href={`https://www.openstreetmap.org/search?query=${mapQuery}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-sm font-semibold text-primary hover:underline"
+            >
+              Mở trên OpenStreetMap
+            </a>
           </div>
         </div>
 

@@ -187,3 +187,4 @@ async def my_courses(db=Depends(get_db), user=Depends(get_current_user)):
         items.append(course)
     return items
 
+
