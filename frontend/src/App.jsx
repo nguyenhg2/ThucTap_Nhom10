@@ -1,33 +1,49 @@
-import { BrowserRouter, Routes, Route, Outlet } from "react-router-dom";
+import { lazy, Suspense } from "react";
+import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
-import { ThemeProvider } from "./context/ThemeContext";
 import ScrollToTop from "./components/ui/ScrollToTop";
 import Header from "./components/layout/Header";
 import Footer from "./components/layout/Footer";
-import Home from "./pages/Home";
-import CourseListingPage from "./pages/CourseListingPage";
-import CourseSingle from "./pages/CourseSingle";
-import LessonPlayer from "./pages/LessonPlayer";
-import BlogListing from "./pages/BlogListing";
-import BlogSingle from "./pages/BlogSingle";
-import Contact from "./pages/Contact";
-import FAQ from "./pages/FAQ";
-import Login from "./pages/Login";
-import Register from "./pages/Register";
-import Payment from "./pages/Payment";
-import PaymentSuccess from "./pages/PaymentSuccess";
-import NotFound from "./pages/NotFound";
-import Profile from "./pages/Profile";
-import MyCourses from "./pages/MyCourses";
-import Cart from "./pages/Cart";
-import RoadmapListing from "./pages/RoadmapListing";
-import RoadmapDetail from "./pages/RoadmapDetail";
-import DashboardLayout from "./components/layout/DashboardLayout";
-import DashboardOverview from "./pages/dashboard/DashboardOverview";
-import PlaceholderPage from "./pages/dashboard/PlaceholderPage";
-import CourseManager from "./pages/dashboard/CourseManager";
-import PaymentManager from "./pages/dashboard/PaymentManager";
-import CouponManager from "./pages/dashboard/CouponManager";
+import { useAuth } from "./context/AuthContext";
+
+const Home = lazy(() => import("./pages/Home"));
+const CourseListingPage = lazy(() => import("./pages/CourseListingPage"));
+const CourseSingle = lazy(() => import("./pages/CourseSingle"));
+const LessonPlayer = lazy(() => import("./pages/LessonPlayer"));
+const BlogListing = lazy(() => import("./pages/BlogListing"));
+const BlogSingle = lazy(() => import("./pages/BlogSingle"));
+const Contact = lazy(() => import("./pages/Contact"));
+const FAQ = lazy(() => import("./pages/FAQ"));
+const Login = lazy(() => import("./pages/Login"));
+const Register = lazy(() => import("./pages/Register"));
+const Payment = lazy(() => import("./pages/Payment"));
+const PaymentSuccess = lazy(() => import("./pages/PaymentSuccess"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+const Profile = lazy(() => import("./pages/Profile"));
+const MyCourses = lazy(() => import("./pages/MyCourses"));
+const Cart = lazy(() => import("./pages/Cart"));
+const RoadmapListing = lazy(() => import("./pages/RoadmapListing"));
+const RoadmapDetail = lazy(() => import("./pages/RoadmapDetail"));
+const DashboardLayout = lazy(() => import("./components/layout/DashboardLayout"));
+const BlogManager = lazy(() => import("./pages/dashboard/admin/BlogManager"));
+const CategoryManager = lazy(() => import("./pages/dashboard/admin/CategoryManager"));
+const ContactManager = lazy(() => import("./pages/dashboard/admin/ContactManager"));
+const CouponManager = lazy(() => import("./pages/dashboard/admin/CouponManager"));
+const OrderManager = lazy(() => import("./pages/dashboard/admin/OrderManager"));
+const ReviewManager = lazy(() => import("./pages/dashboard/admin/ReviewManager"));
+const RoadmapManager = lazy(() => import("./pages/dashboard/admin/RoadmapManager"));
+const SiteContentManager = lazy(() => import("./pages/dashboard/admin/SiteContentManager"));
+const UserManager = lazy(() => import("./pages/dashboard/admin/UserManager"));
+const InstructorStudents = lazy(() => import("./pages/dashboard/instructor/InstructorStudents"));
+const PaymentManager = lazy(() => import("./pages/dashboard/operator/PaymentManager"));
+const CourseManager = lazy(() => import("./pages/dashboard/shared/CourseManager"));
+const CourseReviewManager = lazy(() => import("./pages/dashboard/shared/CourseReviewManager"));
+const DashboardOverview = lazy(() => import("./pages/dashboard/shared/DashboardOverview"));
+const WorkflowBoard = lazy(() => import("./pages/dashboard/shared/WorkflowBoard"));
+
+function PageLoader() {
+  return <div className="min-h-[240px] flex items-center justify-center text-gray-500">Đang tải...</div>;
+}
 
 function MainLayout() {
   return (
@@ -39,12 +55,70 @@ function MainLayout() {
   );
 }
 
+function RequireDashboardRole({ roles, children }) {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return <PageLoader />;
+  }
+
+  if (!user) {
+    return <Navigate to="/dang-nhap" replace />;
+  }
+
+  if (!roles.includes(user.role)) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return children;
+}
+
+function RequireRole({ roles, children, fallback = "/" }) {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return <PageLoader />;
+  }
+
+  if (!user) {
+    return <Navigate to="/dang-nhap" replace />;
+  }
+
+  if (!roles.includes(user.role)) {
+    return <Navigate to={fallback} replace />;
+  }
+
+  return children;
+}
+
+function PaymentsRoute() {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return <PageLoader />;
+  }
+
+  if (!user) {
+    return <Navigate to="/dang-nhap" replace />;
+  }
+
+  if (user.role === "admin") {
+    return <OrderManager />;
+  }
+
+  if (user.role === "operator") {
+    return <PaymentManager />;
+  }
+
+  return <Navigate to="/dashboard" replace />;
+}
+
 export default function App() {
   return (
     <AuthProvider>
-      <ThemeProvider>
-        <BrowserRouter>
+      <BrowserRouter>
           <ScrollToTop />
+          <Suspense fallback={<PageLoader />}>
           <Routes>
             <Route path="/khoa-hoc/:slug/hoc/:lessonId" element={<LessonPlayer />} />
             <Route element={<MainLayout />}>
@@ -56,34 +130,40 @@ export default function App() {
               <Route path="/lien-he" element={<Contact />} />
               <Route path="/faq" element={<FAQ />} />
               <Route path="/dang-nhap" element={<Login />} />
+              <Route path="/admin/dang-nhap" element={<Navigate to="/dang-nhap" replace />} />
+              <Route path="/giang-vien/dang-nhap" element={<Navigate to="/dang-nhap" replace />} />
+              <Route path="/operator/dang-nhap" element={<Navigate to="/dang-nhap" replace />} />
               <Route path="/dang-ky" element={<Register />} />
-              <Route path="/gio-hang" element={<Cart />} />
+              <Route path="/gio-hang" element={<RequireRole roles={["student"]} fallback="/dashboard"><Cart /></RequireRole>} />
               <Route path="/lo-trinh" element={<RoadmapListing />} />
               <Route path="/lo-trinh/:id" element={<RoadmapDetail />} />
-              <Route path="/thanh-toan" element={<Payment />} />
-              <Route path="/thanh-toan-thanh-cong" element={<PaymentSuccess />} />
+              <Route path="/thanh-toan" element={<RequireRole roles={["student"]} fallback="/dashboard"><Payment /></RequireRole>} />
+              <Route path="/thanh-toan-thanh-cong" element={<RequireRole roles={["student"]} fallback="/dashboard"><PaymentSuccess /></RequireRole>} />
               <Route path="/trang-ca-nhan" element={<Profile />} />
-              <Route path="/khoa-hoc-cua-toi" element={<MyCourses />} />
+              <Route path="/khoa-hoc-cua-toi" element={<RequireRole roles={["student"]} fallback="/dashboard"><MyCourses /></RequireRole>} />
               <Route path="*" element={<NotFound />} />
             </Route>
 
             <Route path="/dashboard" element={<DashboardLayout />}>
               <Route index element={<DashboardOverview />} />
-              <Route path="courses" element={<CourseManager />} />
-              <Route path="students" element={<PlaceholderPage title="Quản lý học viên" description="Xem danh sách học viên và tiến độ học tập." />} />
-              <Route path="qa" element={<PlaceholderPage title="Giải đáp Q&A" description="Trả lời câu hỏi của học viên." />} />
-              <Route path="reviews" element={<PlaceholderPage title="Kiểm duyệt khóa học" description="Phê duyệt nội dung trước khi xuất bản." />} />
-              <Route path="payments" element={<PaymentManager />} />
-              <Route path="complaints" element={<PlaceholderPage title="Khiếu nại" description="Theo dõi phản hồi từ người học." />} />
-              <Route path="users" element={<PlaceholderPage title="Quản lý người dùng" description="Quản trị tài khoản và vai trò." />} />
-              <Route path="categories" element={<PlaceholderPage title="Quản lý danh mục" description="Thiết lập danh mục khóa học." />} />
-              <Route path="coupons" element={<CouponManager />} />
-              <Route path="blogs" element={<PlaceholderPage title="Quản lý Blog" description="Đăng và chỉnh sửa bài viết." />} />
-              <Route path="settings" element={<PlaceholderPage title="Cấu hình hệ thống" description="Thiết lập thông số chung." />} />
+              <Route path="profile" element={<RequireDashboardRole roles={["admin", "operator", "instructor"]}><Profile /></RequireDashboardRole>} />
+              <Route path="courses" element={<RequireDashboardRole roles={["instructor"]}><CourseManager /></RequireDashboardRole>} />
+              <Route path="roadmaps" element={<RequireDashboardRole roles={["admin"]}><RoadmapManager /></RequireDashboardRole>} />
+              <Route path="instructor-students" element={<RequireDashboardRole roles={["instructor"]}><InstructorStudents /></RequireDashboardRole>} />
+              <Route path="course-reviews" element={<RequireDashboardRole roles={["operator"]}><CourseReviewManager /></RequireDashboardRole>} />
+              <Route path="reviews" element={<RequireDashboardRole roles={["admin"]}><ReviewManager /></RequireDashboardRole>} />
+              <Route path="payments" element={<PaymentsRoute />} />
+              <Route path="complaints" element={<RequireDashboardRole roles={["operator"]}><WorkflowBoard type="complaints" /></RequireDashboardRole>} />
+              <Route path="users" element={<RequireDashboardRole roles={["admin"]}><UserManager /></RequireDashboardRole>} />
+              <Route path="categories" element={<RequireDashboardRole roles={["admin"]}><CategoryManager /></RequireDashboardRole>} />
+              <Route path="coupons" element={<RequireDashboardRole roles={["admin"]}><CouponManager /></RequireDashboardRole>} />
+              <Route path="blogs" element={<RequireDashboardRole roles={["admin"]}><BlogManager /></RequireDashboardRole>} />
+              <Route path="site-content" element={<RequireDashboardRole roles={["admin"]}><SiteContentManager /></RequireDashboardRole>} />
+              <Route path="contacts" element={<RequireDashboardRole roles={["admin"]}><ContactManager /></RequireDashboardRole>} />
             </Route>
           </Routes>
+          </Suspense>
         </BrowserRouter>
-      </ThemeProvider>
     </AuthProvider>
   );
 }

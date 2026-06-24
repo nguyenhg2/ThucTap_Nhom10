@@ -9,6 +9,13 @@ router = APIRouter()
 @router.get("/api/categories")
 async def get_categories(db=Depends(get_db)):
     cats = await db["categories"].find().to_list(100)
+    counts = await db["courses"].aggregate([
+        {"$match": {"status": "published"}},
+        {"$group": {"_id": "$category_id", "courseCount": {"$sum": 1}}},
+    ]).to_list(length=100)
+    count_by_category = {row["_id"]: row["courseCount"] for row in counts}
+    for cat in cats:
+        cat["courseCount"] = count_by_category.get(str(cat["_id"]), 0)
     return serialize_docs(cats)
 
 
@@ -20,10 +27,10 @@ async def create_category(
 ):
     existing = await db["categories"].find_one({"name": payload.name})
     if existing:
-        raise HTTPException(status_code=400, detail="Danh muc da ton tai")
+        raise HTTPException(status_code=400, detail="Danh mục đã tồn tại")
     doc = {"name": payload.name, "icon": payload.icon or None}
     await db["categories"].insert_one(doc)
-    return {"message": "Danh muc da duoc tao"}
+    return {"message": "Danh mục đã được tạo"}
 
 
 @router.put("/api/categories/{category_id}")
@@ -35,10 +42,10 @@ async def update_category(
 ):
     existing = await db["categories"].find_one({"_id": oid(category_id)})
     if not existing:
-        raise HTTPException(status_code=404, detail="Danh muc khong ton tai")
+        raise HTTPException(status_code=404, detail="Danh mục không tồn tại")
     update_data = payload.model_dump(exclude_unset=True)
     await db["categories"].update_one({"_id": oid(category_id)}, {"$set": update_data})
-    return {"message": "Danh muc da duoc cap nhat"}
+    return {"message": "Danh mục đã được cập nhật"}
 
 
 @router.delete("/api/categories/{category_id}")
@@ -49,5 +56,5 @@ async def delete_category(
 ):
     result = await db["categories"].delete_one({"_id": oid(category_id)})
     if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Danh muc khong ton tai")
-    return {"message": "Danh muc da duoc xoa"}
+        raise HTTPException(status_code=404, detail="Danh mục không tồn tại")
+    return {"message": "Danh mục đã được xóa"}

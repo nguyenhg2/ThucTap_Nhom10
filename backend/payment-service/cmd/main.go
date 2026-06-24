@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"log"
-	"strings"
+	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/stripe/stripe-go/v81"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
@@ -17,27 +17,51 @@ import (
 func main() {
 	cfg := config.Load()
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	clientOptions := options.Client().ApplyURI(cfg.MongoURI)
-	mongoClient, err := mongo.Connect(ctx, clientOptions)
+	mongoClient, err := mongo.Connect(ctx, options.Client().ApplyURI(cfg.MongoURI))
 	if err != nil {
 		log.Fatal("Mongo connect error:", err)
 	}
-	db := mongoClient.Database("codecamp_payment")
+	defer mongoClient.Disconnect(context.Background())
 
-	redisAddr := strings.TrimPrefix(cfg.RedisURL, "redis://")
-	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
-	if _, err := rdb.Ping(ctx).Result(); err != nil {
-		log.Println("Redis is not ready, payment events will be skipped:", err)
-		rdb = nil
+	db := mongoClient.Database(cfg.PaymentDB)
+	if err := ensureIndexes(ctx, db); err != nil {
+		log.Fatal("Mongo index error:", err)
 	}
 
-	stripe.Key = cfg.StripeKey
+	var redisClient *redis.Client
+	if cfg.RedisURL != "" {
+		redisOptions, err := redis.ParseURL(cfg.RedisURL)
+		if err != nil {
+			log.Fatal("Redis config error:", err)
+		}
+		redisClient = redis.NewClient(redisOptions)
+		defer redisClient.Close()
+	}
 
-	r := router.SetupRouter(db, rdb, cfg)
+	r := router.SetupRouter(db, cfg, redisClient)
+	log.Printf("payment service running on port %s", cfg.Port)
 
 	if err := r.Run(":" + cfg.Port); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func ensureIndexes(ctx context.Context, db *mongo.Database) error {
+	_, err := db.Collection("payments").Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "created_at", Value: -1}}},
+		{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "created_at", Value: -1}}},
+		{Keys: bson.D{{Key: "stripe_payment_id", Value: 1}}},
+	})
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Collection("coupons").Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys:    bson.D{{Key: "code", Value: 1}},
+		Options: options.Index().SetUnique(true),
+	})
+	return err
 }
