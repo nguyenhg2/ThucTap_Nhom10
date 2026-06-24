@@ -10,33 +10,19 @@ import {
   FiCheckCircle,
   FiChevronDown,
   FiChevronUp,
-  FiStar,
 } from "react-icons/fi";
 import Breadcrumb from "../components/layout/Breadcrumb";
-import CommentForm from "../components/ui/CommentForm";
 import CommentList from "../components/ui/CommentList";
-import { addCartAPI, getCourseBySlugAPI, getCourseReviewsAPI } from "../services/api";
+import RatingStars from "../components/ui/RatingStars";
+import { addCartAPI, createReviewAPI, getCourseBySlugAPI, getCourseReviewsAPI, getMyCoursesAPI, getSiteContentSectionAPI } from "../services/api";
+import { useAuth } from "../context/AuthContext";
+import { courseFallbackImage, courseImage, useFallbackImage } from "../utils/courseImages";
 
 const LEVEL_MAP = {
   beginner: "Người mới",
   intermediate: "Trung cấp",
   advanced: "Nâng cao",
 };
-
-const FAQS = [
-  {
-    q: "Khóa học này phù hợp với ai?",
-    a: "Khóa học phù hợp với người mới bắt đầu lập trình web hoặc những ai muốn nâng cao kỹ năng.",
-  },
-  {
-    q: "Tôi cần kiến thức gì trước khi học?",
-    a: "Bạn cần có kiến thức cơ bản về HTML, CSS và JavaScript.",
-  },
-  {
-    q: "Khóa học có cập nhật không?",
-    a: "Có, khóa học được cập nhật thường xuyên để theo kịp các phiên bản mới nhất.",
-  },
-];
 
 function formatDuration(seconds) {
   if (!seconds) return "";
@@ -45,15 +31,39 @@ function formatDuration(seconds) {
   return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
 }
 
+function displayLessonTitle(section, lesson) {
+  const sectionOrder = Number(section?.order || 1);
+  const lessonOrder = Number(lesson?.order || 1);
+  const cleanTitle = String(lesson?.title || "")
+    .replace(/^(Bài|Bai|Lesson)\s+\d+(?:\.\d+)+\s*[-–—:]\s*/i, "")
+    .replace(/^(Bài|Bai|Lesson)\s+\d+(?:\.\d+)+\s*/i, "")
+    .trim();
+
+  return cleanTitle
+    ? `Bài ${sectionOrder}.${lessonOrder} - ${cleanTitle}`
+    : `Bài ${sectionOrder}.${lessonOrder}`;
+}
+
 export default function CourseSingle() {
   const { slug } = useParams();
   const navigate = useNavigate();
+  const { user, refreshCartCount } = useAuth();
   const [course, setCourse] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("overview");
   const [expandedSections, setExpandedSections] = useState({});
   const [expandedFaqs, setExpandedFaqs] = useState({});
+  const [courseFaqs, setCourseFaqs] = useState([]);
   const [reviews, setReviews] = useState([]);
+  const [ownedCourseIds, setOwnedCourseIds] = useState(new Set());
+  const [cartMessage, setCartMessage] = useState("");
+  const [reviewForm, setReviewForm] = useState({ rating: 5, comment: "" });
+  const [reviewMessage, setReviewMessage] = useState("");
+  useEffect(() => {
+    getSiteContentSectionAPI("course_faqs")
+      .then((data) => setCourseFaqs(Array.isArray(data?.items) ? data.items : []))
+      .catch(() => setCourseFaqs([]));
+  }, []);
 
   useEffect(() => {
     getCourseBySlugAPI(slug)
@@ -68,6 +78,17 @@ export default function CourseSingle() {
       .finally(() => setLoading(false));
   }, [slug]);
 
+  useEffect(() => {
+    if (!user) {
+      setOwnedCourseIds(new Set());
+      return;
+    }
+
+    getMyCoursesAPI()
+      .then((courses) => setOwnedCourseIds(new Set(courses.map((item) => item._id))))
+      .catch(() => setOwnedCourseIds(new Set()));
+  }, [user]);
+
   function toggleSection(i) {
     setExpandedSections((prev) => ({ ...prev, [i]: !prev[i] }));
   }
@@ -77,13 +98,61 @@ export default function CourseSingle() {
   }
 
   async function addToCart() {
-    await addCartAPI(course._id);
-    navigate("/gio-hang");
+    setCartMessage("");
+
+    if (!user) {
+      navigate("/dang-nhap");
+      return;
+    }
+
+    if (user.role !== "student") {
+      setCartMessage("Chỉ tài khoản học viên mới có thể thêm khóa học vào giỏ hàng.");
+      return;
+    }
+
+    try {
+      await addCartAPI(course._id);
+      await refreshCartCount();
+      navigate("/gio-hang");
+    } catch (err) {
+      if (err.response?.status === 401) {
+        navigate("/dang-nhap");
+        return;
+      }
+      setCartMessage(err.response?.data?.detail || "Không thêm được khóa học vào giỏ hàng.");
+    }
+  }
+
+  async function submitReview(event) {
+    event.preventDefault();
+    setReviewMessage("");
+
+    if (!user) {
+      setReviewMessage("Vui lòng đăng nhập để đánh giá khóa học.");
+      return;
+    }
+    if (!hasCourseAccess) {
+      setReviewMessage("Bạn cần mua khóa học trước khi đánh giá.");
+      return;
+    }
+
+    try {
+      const created = await createReviewAPI({
+        course_id: course._id,
+        rating: Number(reviewForm.rating),
+        comment: reviewForm.comment.trim(),
+      });
+      setReviews((items) => [created, ...items]);
+      setReviewForm({ rating: 5, comment: "" });
+      setReviewMessage("Đã lưu đánh giá vào cơ sở dữ liệu.");
+    } catch (err) {
+      setReviewMessage(err.response?.data?.detail || "Không gửi được đánh giá.");
+    }
   }
 
   if (loading) {
     return (
-      <div className="max-w-[1290px] mx-auto px-5 py-20 text-center text-gray-500">
+      <div className="max-w-322.5 mx-auto px-5 py-20 text-center text-gray-500">
         Đang tải khóa học...
       </div>
     );
@@ -91,7 +160,7 @@ export default function CourseSingle() {
 
   if (!course) {
     return (
-      <div className="max-w-[1290px] mx-auto px-5 py-20 text-center text-gray-500">
+      <div className="max-w-322.5 mx-auto px-5 py-20 text-center text-gray-500">
         Không tìm thấy khóa học.
       </div>
     );
@@ -109,6 +178,11 @@ export default function CourseSingle() {
         0
       )
     : 0;
+  const firstLesson = (course.sections || []).flatMap((section) => section.lessons || [])[0];
+  const hasCourseAccess = ownedCourseIds.has(course._id);
+  const learnPath = firstLesson ? `/khoa-hoc/${slug}/hoc/${firstLesson._id}` : `/khoa-hoc/${slug}`;
+  const reviewCount = course.review_count ?? reviews.length;
+  const ratingValue = Number(course.rating || 0);
 
   const tabs = [
     { id: "overview", label: "Tổng quan" },
@@ -127,7 +201,7 @@ export default function CourseSingle() {
           { label: course.title },
         ]}
       />
-      <div className="max-w-[1290px] mx-auto px-5 py-10">
+      <div className="max-w-322.5 mx-auto px-5 py-10">
         <div className="flex flex-col lg:flex-row gap-10">
           <div className="flex-1">
             <span className="text-sm font-medium text-primary bg-primary-light px-3 py-1 rounded-full">
@@ -211,13 +285,15 @@ export default function CourseSingle() {
                         </button>
                         {expandedSections[i] && section.lessons && (
                           <div className="divide-y divide-gray-100">
-                            {section.lessons.map((lesson) => (
+                            {section.lessons.map((lesson) => {
+                              const canOpenLesson = hasCourseAccess || lesson.is_free_preview;
+                              return (
                               <div
                                 key={lesson._id}
                                 className="flex items-center justify-between px-6 py-3"
                               >
                                 <div className="flex items-center gap-3">
-                                  {lesson.is_free_preview ? (
+                                  {canOpenLesson ? (
                                     <FiPlay
                                       size={14}
                                       className="text-primary"
@@ -228,13 +304,13 @@ export default function CourseSingle() {
                                       className="text-gray-400"
                                     />
                                   )}
-                                  {lesson.is_free_preview ? (
+                                  {canOpenLesson ? (
                                     <Link to={`/khoa-hoc/${slug}/hoc/${lesson._id}`} className="text-sm text-gray-600 hover:text-primary">
-                                      {lesson.title}
+                                      {displayLessonTitle(section, lesson)}
                                     </Link>
                                   ) : (
                                     <span className="text-sm text-gray-600">
-                                      {lesson.title}
+                                      {displayLessonTitle(section, lesson)}
                                     </span>
                                   )}
                                   {lesson.is_free_preview && (
@@ -247,7 +323,8 @@ export default function CourseSingle() {
                                   {formatDuration(lesson.duration)}
                                 </span>
                               </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                       </div>
@@ -263,16 +340,16 @@ export default function CourseSingle() {
               {activeTab === "instructor" && (
                 <div className="flex items-start gap-6">
                   <img
-                    src="https://placehold.co/120/564FFD/fff?text=GV"
-                    alt="Giảng viên"
+                    src={course.instructor?.avatar || "https://placehold.co/120/564FFD/fff?text=GV"}
+                    alt={course.instructor?.name || "Giảng viên"}
                     className="w-28 h-28 rounded-xl object-cover"
                   />
                   <div>
                     <h3 className="text-xl font-semibold text-secondary">
-                      Đinh Thành Nguyên
+                      {course.instructor?.name || "Giảng viên chưa cập nhật"}
                     </h3>
                     <p className="text-sm text-gray-500 mt-1">
-                      Senior Frontend Developer
+                      {course.instructor?.title || course.instructor?.role || "Chưa cập nhật vai trò"}
                     </p>
                     <div className="flex items-center gap-4 mt-3 text-sm text-gray-500">
                       <span className="flex items-center gap-1">
@@ -283,9 +360,7 @@ export default function CourseSingle() {
                       </span>
                     </div>
                     <p className="text-gray-600 mt-4 leading-7">
-                      Hơn 10 năm kinh nghiệm phát triển phần mềm, chuyên gia
-                      về kiến trúc frontend. Từng làm việc tại các công ty công
-                      nghệ hàng đầu Việt Nam.
+                      {course.instructor?.bio || "Chưa cập nhật thông tin giảng viên."}
                     </p>
                   </div>
                 </div>
@@ -293,7 +368,8 @@ export default function CourseSingle() {
 
               {activeTab === "faqs" && (
                 <div className="flex flex-col gap-4">
-                  {FAQS.map((faq, i) => (
+                  {courseFaqs.length === 0 && <p className="text-sm text-gray-500">Chưa có FAQ khóa học trong cơ sở dữ liệu.</p>}
+                  {courseFaqs.map((faq, i) => (
                     <div
                       key={i}
                       className="border border-gray-100 rounded-xl overflow-hidden"
@@ -332,28 +408,30 @@ export default function CourseSingle() {
                   <div className="flex items-center gap-6">
                     <div className="text-center">
                       <span className="text-4xl font-heading font-bold text-secondary">
-                        {course.rating || "4.0"}
+                        {ratingValue.toFixed(1)}
                       </span>
-                      <div className="flex gap-1 justify-center mt-2">
-                        {Array.from({ length: 5 }).map((_, i) => (
-                          <FiStar
-                            key={i}
-                            size={16}
-                            className={
-                              i < Math.round(course.rating || 4)
-                                ? "text-warning fill-warning"
-                                : "text-gray-200"
-                            }
-                          />
-                        ))}
+                      <div className="flex justify-center mt-2">
+                        <RatingStars value={ratingValue} />
                       </div>
                       <p className="text-sm text-gray-500 mt-1">
-                        {course.total_students} đánh giá
+                         {reviewCount} đánh giá
                       </p>
                     </div>
                   </div>
                   <CommentList comments={reviews} />
-                  <CommentForm />
+                  <form onSubmit={submitReview} className="rounded-xl border border-gray-100 p-5">
+                    <h3 className="text-lg font-semibold text-secondary">Đánh giá khóa học</h3>
+                    <div className="mt-4 grid gap-4 md:grid-cols-[160px_1fr]">
+                      <select value={reviewForm.rating} onChange={(e) => setReviewForm({ ...reviewForm, rating: e.target.value })} className="rounded-lg border border-gray-200 px-4 py-3 text-sm outline-none focus:border-primary">
+                        {[5, 4, 3, 2, 1].map((value) => <option key={value} value={value}>{value} sao</option>)}
+                      </select>
+                      <textarea value={reviewForm.comment} onChange={(e) => setReviewForm({ ...reviewForm, comment: e.target.value })} rows={4} required placeholder="Nhận xét sau khi học khóa này" className="rounded-lg border border-gray-200 px-4 py-3 text-sm outline-none focus:border-primary" />
+                    </div>
+                    <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <p className={`text-sm ${reviewMessage.includes("Đã lưu") ? "text-success" : "text-gray-500"}`}>{reviewMessage || "Chỉ học viên đã mua khóa học mới có thể đánh giá."}</p>
+                      <button type="submit" className="rounded-lg bg-primary px-6 py-3 text-sm font-semibold text-white">Gửi đánh giá</button>
+                    </div>
+                  </form>
                 </div>
               )}
             </div>
@@ -362,18 +440,31 @@ export default function CourseSingle() {
           <div className="w-full lg:w-80 shrink-0">
             <div className="sticky top-28 border border-gray-100 rounded-xl p-6 flex flex-col gap-5">
               <img
-                src={course.thumbnail || "https://placehold.co/320x180"}
+                src={courseImage(course)}
                 alt={course.title}
-                className="w-full rounded-lg"
+                onError={(event) => useFallbackImage(event, courseFallbackImage(course))}
+                className="aspect-video w-full rounded-lg bg-gray-50 object-contain p-2"
               />
-              <div className="flex items-center gap-3">
-                <span className="text-2xl font-bold text-primary">
-                  {priceText}
-                </span>
-              </div>
+              {!hasCourseAccess && (
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl font-bold text-primary">
+                    {priceText}
+                  </span>
+                </div>
+              )}
+              {hasCourseAccess && (
+                <Link
+                  to={learnPath}
+                  className="w-full py-3 bg-success text-white font-semibold rounded-lg text-center hover:bg-green-600 transition-colors"
+                >
+                  Vào học
+                </Link>
+              )}
+              {!hasCourseAccess && (!user || user.role === "student") && (
+                <>
               <Link
-                to="/thanh-toan"
-                state={{ courseId: course._id, title: course.title, price: course.price, thumbnail: course.thumbnail }}
+                to={user ? "/thanh-toan" : "/dang-nhap"}
+                state={{ courseId: course._id, title: course.title, price: course.price, thumbnail: courseImage(course) }}
                 className="w-full py-3 bg-primary text-white font-semibold rounded-lg text-center hover:bg-orange-600 transition-colors"
               >
                 Bắt đầu ngay
@@ -381,6 +472,14 @@ export default function CourseSingle() {
               <button onClick={addToCart} className="w-full py-3 border border-primary text-primary font-semibold rounded-lg text-center hover:bg-primary-light transition-colors">
                 Thêm vào giỏ hàng
               </button>
+                </>
+              )}
+              {user && user.role !== "student" && (
+                <p className="text-sm text-gray-500">
+                  Tài khoản quản trị/giảng viên/vận hành không thể mua khóa học.
+                </p>
+              )}
+              {cartMessage && <p className="text-sm text-red-500">{cartMessage}</p>}
               <div className="flex flex-col gap-3 text-sm text-gray-600">
                 {course.duration && (
                   <div className="flex justify-between">
@@ -412,7 +511,7 @@ export default function CourseSingle() {
                   <div className="flex justify-between">
                     <span>Đánh giá</span>
                     <span className="font-medium text-secondary flex items-center gap-1">
-                      <FiStar size={12} className="text-warning fill-warning" />
+                      <RatingStars value={1} size={12} max={1} />
                       {course.rating}
                     </span>
                   </div>

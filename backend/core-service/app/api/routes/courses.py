@@ -3,8 +3,11 @@ from app.models.common import Level
 from app.core.deps import get_optional_user, require_role
 from app.db.mongo import get_db, serialize_doc, serialize_docs
 from app.models.courses import CourseCreate, CourseResponse
+from app.services.stats_service import attach_course_relations, enrich_course_stats, enrich_courses_stats
 from typing import List, Optional
 from bson import ObjectId
+from collections import defaultdict
+import asyncio
 import re
 import unicodedata
 
@@ -21,8 +24,10 @@ def _can_view_unpublished(course: dict, user: dict | None) -> bool:
 
 def _course_list_query(user: dict | None, review_status: Optional[str] = None, manage: bool = False) -> dict:
     if review_status:
-        if not user or user.get("role") not in {"admin", "operator"}:
+        if not user or user.get("role") != "operator":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Không đủ quyền thực hiện")
+        if review_status == "all":
+            return {}
         return {"status": review_status}
     if not manage:
         return {"status": "published"}
@@ -31,7 +36,10 @@ def _course_list_query(user: dict | None, review_status: Optional[str] = None, m
     if user.get("role") in {"admin", "operator"}:
         return {}
     if user.get("role") == "instructor":
-        return {"$or": [{"status": "published"}, {"instructor_id": user["_id"]}]}
+        values = [user["_id"]]
+        if ObjectId.is_valid(user["_id"]):
+            values.append(ObjectId(user["_id"]))
+        return {"instructor_id": {"$in": values}}
     return {"status": "published"}
 
 
@@ -59,12 +67,31 @@ def _ensure_course_owner(course: dict | None, user: dict):
     if user.get("role") != "admin" and course.get("instructor_id") != user["_id"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Không đủ quyền thực hiện")
 
+
+def _course_oid(course_id: str) -> ObjectId:
+    if not ObjectId.is_valid(course_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="course_id không hợp lệ")
+    return ObjectId(course_id)
+
+
 def _cloudinary_folder_for_course(payload: dict) -> str:
     slug = str(payload.get("slug") or payload.get("title") or "course").strip()
     slug = unicodedata.normalize("NFD", slug).encode("ascii", "ignore").decode("ascii").lower()
     slug = re.sub(r"[^a-z0-9-]+", "-", slug)
     slug = re.sub(r"-+", "-", slug).strip("-") or "course"
     return f"codecamp/courses/{slug}"
+
+def _remove_computed_course_fields(payload: dict) -> dict:
+    payload.pop("rating", None)
+    payload.pop("total_students", None)
+    return payload
+
+
+def _lesson_without_playback_url(lesson: dict) -> dict:
+    lesson["has_video"] = bool(lesson.get("video_public_id") or lesson.get("video_url"))
+    lesson.pop("signed_url", None)
+    lesson.pop("video_url", None)
+    return lesson
 
 
 @router.get("/api/courses", response_model=List[CourseResponse])
@@ -82,6 +109,7 @@ async def get_courses(
     if level:
         query["level"] = level
     courses = await db["courses"].find(query).to_list(length=100)
+    await enrich_courses_stats(db, courses)
     return serialize_docs(courses)
 
 
@@ -98,24 +126,24 @@ async def get_course_by_slug(slug: str, db=Depends(get_db), user=Depends(get_opt
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Không tìm thấy khóa học",
         )
-    course = serialize_doc(course)
-
-    sections = (
-        await db["sections"]
-        .find({"course_id": course["_id"]})
-        .sort("order", 1)
-        .to_list(length=100)
+    course_id = str(course["_id"])
+    sections_query = db["sections"].find({"course_id": course_id}).sort("order", 1).to_list(length=100)
+    lessons_query = db["lessons"].find({"course_id": course_id}).sort([("section_id", 1), ("order", 1)]).to_list(length=500)
+    _, _, sections, lessons = await asyncio.gather(
+        enrich_course_stats(db, course),
+        attach_course_relations(db, course),
+        sections_query,
+        lessons_query,
     )
+    course = serialize_doc(course)
     sections = serialize_docs(sections)
 
+    lessons_by_section = defaultdict(list)
+    for lesson in serialize_docs(lessons):
+        lessons_by_section[lesson.get("section_id")].append(_lesson_without_playback_url(lesson))
+
     for section in sections:
-        section_lessons = (
-            await db["lessons"]
-            .find({"section_id": section["_id"]})
-            .sort("order", 1)
-            .to_list(length=100)
-        )
-        section["lessons"] = serialize_docs(section_lessons)
+        section["lessons"] = lessons_by_section[section["_id"]]
 
     course["sections"] = sections
     return course
@@ -123,7 +151,7 @@ async def get_course_by_slug(slug: str, db=Depends(get_db), user=Depends(get_opt
 
 @router.get("/api/courses/{course_id}", response_model=CourseResponse)
 async def get_course(course_id: str, db=Depends(get_db), user=Depends(get_optional_user)):
-    course = await db["courses"].find_one({"_id": ObjectId(course_id)})
+    course = await db["courses"].find_one({"_id": _course_oid(course_id)})
     if not course:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -131,6 +159,7 @@ async def get_course(course_id: str, db=Depends(get_db), user=Depends(get_option
         )
     if course.get("status") != "published" and not _can_view_unpublished(course, user):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy khóa học")
+    await enrich_course_stats(db, course)
     return serialize_doc(course)
 
 
@@ -140,7 +169,7 @@ async def create_course(
     db=Depends(get_db),
     user=Depends(require_role("admin", "instructor")),
 ):
-    new_course = payload.model_dump()
+    new_course = _remove_computed_course_fields(payload.model_dump())
     if not new_course.get("cloudinary_folder"):
         new_course["cloudinary_folder"] = _cloudinary_folder_for_course(new_course)
     if user.get("role") == "instructor":
@@ -158,9 +187,10 @@ async def update_course(
     db=Depends(get_db),
     user=Depends(require_role("admin", "instructor")),
 ):
-    existing = await db["courses"].find_one({"_id": ObjectId(course_id)})
+    course_oid = _course_oid(course_id)
+    existing = await db["courses"].find_one({"_id": course_oid})
     _ensure_course_owner(existing, user)
-    update_data = payload.model_dump(exclude_unset=True)
+    update_data = _remove_computed_course_fields(payload.model_dump(exclude_unset=True))
     if user.get("role") == "instructor":
         update_data["instructor_id"] = user["_id"]
     update_data = _normalize_course_status(update_data, user, existing)
@@ -170,14 +200,14 @@ async def update_course(
             detail="Không có dữ liệu nào được cung cấp để cập nhật",
         )
     result = await db["courses"].update_one(
-        {"_id": ObjectId(course_id)}, {"$set": update_data}
+        {"_id": course_oid}, {"$set": update_data}
     )
     if result.matched_count == 0:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Không tìm thấy khóa học",
         )
-    updated_course = await db["courses"].find_one({"_id": ObjectId(course_id)})
+    updated_course = await db["courses"].find_one({"_id": course_oid})
     return serialize_doc(updated_course)
 
 
@@ -186,12 +216,10 @@ async def review_course(
     course_id: str,
     payload: dict,
     db=Depends(get_db),
-    user=Depends(require_role("operator", "admin")),
+    user=Depends(require_role("operator")),
 ):
-    if not ObjectId.is_valid(course_id):
-        raise HTTPException(status_code=400, detail="course_id không hợp lệ")
-
-    existing = await db["courses"].find_one({"_id": ObjectId(course_id)})
+    course_oid = _course_oid(course_id)
+    existing = await db["courses"].find_one({"_id": course_oid})
     if not existing:
         raise HTTPException(status_code=404, detail="Không tìm thấy khóa học")
 
@@ -204,8 +232,8 @@ async def review_course(
         "review_note": str(payload.get("review_note") or "").strip(),
         "reviewed_by": user["_id"],
     }
-    await db["courses"].update_one({"_id": ObjectId(course_id)}, {"$set": update_data})
-    updated_course = await db["courses"].find_one({"_id": ObjectId(course_id)})
+    await db["courses"].update_one({"_id": course_oid}, {"$set": update_data})
+    updated_course = await db["courses"].find_one({"_id": course_oid})
     return serialize_doc(updated_course)
 
 
@@ -215,10 +243,8 @@ async def submit_course_for_review(
     db=Depends(get_db),
     user=Depends(require_role("instructor")),
 ):
-    if not ObjectId.is_valid(course_id):
-        raise HTTPException(status_code=400, detail="course_id không hợp lệ")
-
-    course = await db["courses"].find_one({"_id": ObjectId(course_id)})
+    course_oid = _course_oid(course_id)
+    course = await db["courses"].find_one({"_id": course_oid})
     _ensure_course_owner(course, user)
 
     if course.get("status") not in {"draft", "rejected"}:
@@ -239,10 +265,10 @@ async def submit_course_for_review(
         raise HTTPException(status_code=400, detail="Mỗi phần cần có ít nhất một bài học trước khi gửi duyệt")
 
     await db["courses"].update_one(
-        {"_id": ObjectId(course_id)},
+        {"_id": course_oid},
         {"$set": {"status": "pending_review", "submitted_by": user["_id"]}},
     )
-    updated_course = await db["courses"].find_one({"_id": ObjectId(course_id)})
+    updated_course = await db["courses"].find_one({"_id": course_oid})
     return serialize_doc(updated_course)
 
 
@@ -250,11 +276,12 @@ async def submit_course_for_review(
 async def delete_course(
     course_id: str,
     db=Depends(get_db),
-    user=Depends(require_role("admin", "instructor")),
+    user=Depends(require_role( "instructor")),
 ):
-    existing = await db["courses"].find_one({"_id": ObjectId(course_id)})
+    course_oid = _course_oid(course_id)
+    existing = await db["courses"].find_one({"_id": course_oid})
     _ensure_course_owner(existing, user)
-    result = await db["courses"].delete_one({"_id": ObjectId(course_id)})
+    result = await db["courses"].delete_one({"_id": course_oid})
     if result.deleted_count == 0:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

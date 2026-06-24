@@ -10,9 +10,21 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"media-service/internal/config"
 )
 
-func (h *Handler) uploadBody(file multipart.File, fileName string, folder string) (*bytes.Buffer, string, error) {
+var cloudinaryClient = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+	},
+}
+
+func uploadBody(cfg *config.Config, file multipart.File, fileName string, folder string, deliveryType string) (*bytes.Buffer, string, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
@@ -27,11 +39,15 @@ func (h *Handler) uploadBody(file multipart.File, fileName string, folder string
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	signatureText := "asset_folder=" + folder + "&timestamp=" + timestamp
 	fields := map[string]string{
-		"api_key":      h.cfg.CloudinaryKey,
+		"api_key":      cfg.CloudinaryKey,
 		"timestamp":    timestamp,
 		"asset_folder": folder,
-		"signature":    signCloudinary(signatureText, h.cfg.CloudinarySecret),
 	}
+	if deliveryType != "" {
+		fields["type"] = deliveryType
+		signatureText += "&type=" + deliveryType
+	}
+	fields["signature"] = signCloudinary(signatureText, cfg.CloudinarySecret)
 
 	for key, value := range fields {
 		if err := writer.WriteField(key, value); err != nil {
@@ -45,46 +61,40 @@ func (h *Handler) uploadBody(file multipart.File, fileName string, folder string
 	return body, writer.FormDataContentType(), nil
 }
 
-func (h *Handler) ensureCloudinaryConfig() error {
-	if h.cfg.CloudinaryCloud == "" || h.cfg.CloudinaryKey == "" || h.cfg.CloudinarySecret == "" {
-		return apiError{Status: http.StatusInternalServerError, Message: "Cloudinary config is missing"}
+func ensureCloudinaryConfig(cfg *config.Config) error {
+	if cfg.CloudinaryCloud == "" || cfg.CloudinaryKey == "" || cfg.CloudinarySecret == "" {
+		return apiError{Status: http.StatusInternalServerError, Message: "Thiếu cấu hình Cloudinary"}
 	}
 	return nil
 }
 
-func (h *Handler) cloudinaryURL(resourceType string, action string) string {
-	return "https://api.cloudinary.com/v1_1/" + h.cfg.CloudinaryCloud + "/" + resourceType + "/" + action
+func cloudinaryURL(cfg *config.Config, resourceType string, action string) string {
+	return "https://api.cloudinary.com/v1_1/" + cfg.CloudinaryCloud + "/" + resourceType + "/" + action
 }
 
-func (h *Handler) destroyForm(publicID string) url.Values {
+func destroyForm(cfg *config.Config, publicID string) url.Values {
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	signatureText := "invalidate=true&public_id=" + publicID + "&timestamp=" + timestamp
 
 	form := url.Values{}
-	form.Set("api_key", h.cfg.CloudinaryKey)
+	form.Set("api_key", cfg.CloudinaryKey)
 	form.Set("timestamp", timestamp)
 	form.Set("public_id", publicID)
 	form.Set("invalidate", "true")
-	form.Set("signature", signCloudinary(signatureText, h.cfg.CloudinarySecret))
+	form.Set("signature", signCloudinary(signatureText, cfg.CloudinarySecret))
 	return form
 }
 
-func postCloudinaryForm(endpoint string, form url.Values) ([]byte, error) {
-	resp, err := http.PostForm(endpoint, form)
+func cloudinaryPostForm(endpoint string, form url.Values) ([]byte, error) {
+	resp, err := cloudinaryClient.PostForm(endpoint, form)
 	if err != nil {
 		return nil, apiError{Status: http.StatusBadGateway, Message: err.Error()}
 	}
 	return readCloudinaryResponse(resp)
 }
 
-func postCloudinaryMultipart(endpoint string, body io.Reader, contentType string) ([]byte, error) {
-	req, err := http.NewRequest(http.MethodPost, endpoint, body)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", contentType)
-
-	resp, err := http.DefaultClient.Do(req)
+func cloudinaryPostMultipart(endpoint string, body io.Reader, contentType string) ([]byte, error) {
+	resp, err := cloudinaryClient.Post(endpoint, contentType, body)
 	if err != nil {
 		return nil, apiError{Status: http.StatusBadGateway, Message: err.Error()}
 	}

@@ -12,159 +12,143 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const attachmentFolder = "codecamp/attachments"
-
-type Handler struct {
-	cfg *config.Config
-}
-
-type cloudinaryUpload struct {
-	SecureURL    string  `json:"secure_url"`
-	PublicID     string  `json:"public_id"`
-	Duration     float64 `json:"duration"`
-	Bytes        int64   `json:"bytes"`
-	Format       string  `json:"format"`
-	OriginalName string  `json:"original_filename"`
-}
-
-type deleteVideoRequest struct {
-	PublicID string `json:"public_id"`
-}
-
-type uploadResult struct {
-	FileName string
-	Folder   string
-	Data     cloudinaryUpload
-}
-
-type apiError struct {
-	Status  int
-	Message string
-}
-
-func (e apiError) Error() string { return e.Message }
-
 func RegisterRoutes(g *gin.RouterGroup, cfg *config.Config) {
-	h := &Handler{cfg: cfg}
-	g.POST("/upload", h.UploadVideo)
-	g.DELETE("/delete", h.DeleteVideo)
+	g.POST("/images/upload", func(c *gin.Context) { uploadImage(c, cfg) })
+	g.POST("/videos/upload", func(c *gin.Context) { uploadVideo(c, cfg) })
+	g.DELETE("/videos/delete", func(c *gin.Context) { deleteVideo(c, cfg) })
+	g.POST("/files/upload", func(c *gin.Context) { uploadFile(c, cfg) })
 }
 
-func RegisterFileRoutes(g *gin.RouterGroup, cfg *config.Config) {
-	h := &Handler{cfg: cfg}
-	g.POST("/upload", h.UploadFile)
-}
-
-func (h *Handler) UploadVideo(c *gin.Context) {
-	folder := cleanFolder(c.PostForm("folder"))
+func uploadImage(c *gin.Context, cfg *config.Config) {
+	folder := strings.Trim(strings.TrimSpace(c.PostForm("folder")), "/")
 	if folder == "" {
-		writeError(c, apiError{Status: http.StatusBadRequest, Message: "folder is required"})
-		return
+		folder = "codecamp/course-covers"
 	}
 
-	upload, err := h.upload(c, "video", "video", folder)
+	data, fileName, err := upload(c, cfg, "image", "image", folder, "")
 	if err != nil {
 		writeError(c, err)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"video_url":    upload.Data.SecureURL,
-		"public_id":    upload.Data.PublicID,
-		"asset_folder": upload.Folder,
-		"duration":     upload.Data.Duration,
-		"bytes":        upload.Data.Bytes,
-		"format":       upload.Data.Format,
+		"image_url":    data.SecureURL,
+		"url":          data.SecureURL,
+		"public_id":    data.PublicID,
+		"asset_folder": folder,
+		"bytes":        data.Bytes,
+		"format":       data.Format,
+		"name":         fileName,
 	})
 }
 
-func (h *Handler) UploadFile(c *gin.Context) {
-	upload, err := h.upload(c, "file", "raw", attachmentFolder)
+func uploadVideo(c *gin.Context, cfg *config.Config) {
+	folder := strings.Trim(strings.TrimSpace(c.PostForm("folder")), "/")
+	if folder == "" {
+		writeError(c, apiError{Status: http.StatusBadRequest, Message: "Vui lòng nhập thư mục"})
+		return
+	}
+
+	data, fileName, err := upload(c, cfg, "video", "video", folder, "authenticated")
 	if err != nil {
 		writeError(c, err)
 		return
 	}
 
-	name := upload.Data.OriginalName
+	c.JSON(http.StatusOK, gin.H{
+		"video_url":    data.SecureURL,
+		"public_id":    data.PublicID,
+		"asset_folder": folder,
+		"delivery_type": data.Type,
+		"duration":     data.Duration,
+		"bytes":        data.Bytes,
+		"format":       data.Format,
+		"version":      data.Version,
+		"name":         fileName,
+	})
+}
+
+func uploadFile(c *gin.Context, cfg *config.Config) {
+	data, fileName, err := upload(c, cfg, "file", "raw", attachmentFolder, "")
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+
+	name := data.OriginalName
 	if name == "" {
-		name = upload.FileName
+		name = fileName
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"name":         name,
-		"url":          upload.Data.SecureURL,
-		"public_id":    upload.Data.PublicID,
-		"asset_folder": upload.Folder,
-		"bytes":        upload.Data.Bytes,
-		"format":       upload.Data.Format,
+		"url":          data.SecureURL,
+		"public_id":    data.PublicID,
+		"asset_folder": attachmentFolder,
+		"bytes":        data.Bytes,
+		"format":       data.Format,
 	})
 }
 
-func (h *Handler) DeleteVideo(c *gin.Context) {
-	if err := h.ensureCloudinaryConfig(); err != nil {
+func deleteVideo(c *gin.Context, cfg *config.Config) {
+	if err := ensureCloudinaryConfig(cfg); err != nil {
 		writeError(c, err)
 		return
 	}
 
-	var payload deleteVideoRequest
-	if err := c.ShouldBindJSON(&payload); err != nil && err != io.EOF {
-		writeError(c, apiError{Status: http.StatusBadRequest, Message: "public_id is required"})
+	var req deleteVideoRequest
+	if err := c.ShouldBindJSON(&req); err != nil && err != io.EOF {
+		writeError(c, apiError{Status: http.StatusBadRequest, Message: "public_id là bắt buộc"})
 		return
 	}
 
-	publicID := strings.TrimSpace(payload.PublicID)
+	publicID := strings.TrimSpace(req.PublicID)
 	if publicID == "" {
-		writeError(c, apiError{Status: http.StatusBadRequest, Message: "public_id is required"})
+		writeError(c, apiError{Status: http.StatusBadRequest, Message: "public_id là bắt buộc"})
 		return
 	}
 
-	body, err := postCloudinaryForm(h.cloudinaryURL("video", "destroy"), h.destroyForm(publicID))
+	body, err := cloudinaryPostForm(cloudinaryURL(cfg, "video", "destroy"), destroyForm(cfg, publicID))
 	if err != nil {
 		writeError(c, err)
 		return
 	}
 
-	writeDeleteResult(c, publicID, body)
-}
-
-func (h *Handler) upload(c *gin.Context, formField string, resourceType string, folder string) (*uploadResult, error) {
-	if err := h.ensureCloudinaryConfig(); err != nil {
-		return nil, err
-	}
-
-	file, header, err := c.Request.FormFile(formField)
-	if err != nil {
-		return nil, apiError{Status: http.StatusBadRequest, Message: "choose a file to upload"}
-	}
-	defer file.Close()
-
-	body, contentType, err := h.uploadBody(file, header.Filename, folder)
-	if err != nil {
-		return nil, err
-	}
-
-	respBody, err := postCloudinaryMultipart(h.cloudinaryURL(resourceType, "upload"), body, contentType)
-	if err != nil {
-		return nil, err
-	}
-
-	var upload cloudinaryUpload
-	if err := json.Unmarshal(respBody, &upload); err != nil {
-		return nil, err
-	}
-
-	return &uploadResult{FileName: header.Filename, Folder: folder, Data: upload}, nil
-}
-
-func writeDeleteResult(c *gin.Context, publicID string, body []byte) {
 	var result map[string]any
 	if err := json.Unmarshal(body, &result); err != nil {
 		c.JSON(http.StatusOK, gin.H{"public_id": publicID, "raw": string(body)})
 		return
 	}
-
 	result["public_id"] = publicID
 	c.JSON(http.StatusOK, result)
+}
+
+func upload(c *gin.Context, cfg *config.Config, formField string, resourceType string, folder string, deliveryType string) (cloudinaryUpload, string, error) {
+	if err := ensureCloudinaryConfig(cfg); err != nil {
+		return cloudinaryUpload{}, "", err
+	}
+
+	file, header, err := c.Request.FormFile(formField)
+	if err != nil {
+		return cloudinaryUpload{}, "", apiError{Status: http.StatusBadRequest, Message: "Vui lòng chọn tệp để tải lên"}
+	}
+	defer file.Close()
+
+	body, contentType, err := uploadBody(cfg, file, header.Filename, folder, deliveryType)
+	if err != nil {
+		return cloudinaryUpload{}, "", err
+	}
+
+	respBody, err := cloudinaryPostMultipart(cloudinaryURL(cfg, resourceType, "upload"), body, contentType)
+	if err != nil {
+		return cloudinaryUpload{}, "", err
+	}
+
+	var data cloudinaryUpload
+	if err := json.Unmarshal(respBody, &data); err != nil {
+		return cloudinaryUpload{}, "", err
+	}
+	return data, header.Filename, nil
 }
 
 func writeError(c *gin.Context, err error) {
@@ -174,8 +158,4 @@ func writeError(c *gin.Context, err error) {
 		return
 	}
 	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-}
-
-func cleanFolder(folder string) string {
-	return strings.Trim(strings.TrimSpace(folder), "/")
 }

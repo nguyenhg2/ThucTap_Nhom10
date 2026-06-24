@@ -1,183 +1,404 @@
 import axios from "axios";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8001";
-const PAYMENT_API_BASE = import.meta.env.VITE_PAYMENT_API_URL || "http://localhost:8002";
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000/core";
+const PAYMENT_API_BASE = import.meta.env.VITE_PAYMENT_API_URL || "http://localhost:8000/payment";
+const MEDIA_API_BASE = import.meta.env.VITE_MEDIA_API_URL || "http://localhost:8000/media";
+const BLOG_API_BASE = import.meta.env.VITE_BLOG_API_URL || "http://localhost:8000/blog";
 
-const api = axios.create({
-  baseURL: API_BASE,
-  headers: { "Content-Type": "application/json" },
-});
+function createClient(baseURL) {
+  const client = axios.create({ baseURL });
 
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("token");
-  if (token) {
-    config.headers.Authorization = "Bearer " + token;
+  client.interceptors.request.use((config) => {
+    const token = localStorage.getItem("token");
+    if (token) {
+      config.headers.Authorization = "Bearer " + token;
+    }
+    return config;
+  });
+
+  return client;
+}
+
+function responseData(request) {
+  return request.then((res) => res.data);
+}
+
+const getCache = new Map();
+
+function cachedGet(client, url, config, ttl = 30000) {
+  const key = `${client.defaults.baseURL}${url}${JSON.stringify(config?.params || {})}`;
+  const cached = getCache.get(key);
+  if (cached && cached.expires > Date.now()) {
+    return cached.promise;
   }
-  return config;
-});
 
-export async function loginAPI(email, password) {
-  const res = await api.post("/api/auth/login", { email, password });
-  return res.data;
-}
-
-export async function registerAPI(name, email, password) {
-  const res = await api.post("/api/auth/register", { name, email, password });
-  return res.data;
-}
-
-export async function getMeAPI() {
-  const res = await api.get("/api/auth/me");
-  return res.data;
-}
-
-export async function getCoursesAPI(params) {
-  const res = await api.get("/api/courses", { params });
-  return res.data;
-}
-
-export async function getCourseBySlugAPI(slug) {
-  const res = await api.get("/api/courses/slug/" + slug);
-  return res.data;
-}
-
-export async function getCourseByIdAPI(id) {
-  const res = await api.get("/api/courses/" + id);
-  return res.data;
-}
-
-export async function getCategoriesAPI() {
-  const res = await api.get("/api/categories");
-  return res.data;
-}
-
-export async function enrollCourseAPI(courseId) {
-  const res = await api.post("/api/enroll?course_id=" + courseId);
-  return res.data;
-}
-
-export async function getLessonAPI(lessonId) {
-  const res = await api.get("/api/lessons/" + lessonId);
-  return res.data;
-}
-
-export async function getBlogsAPI(params) {
-  const res = await api.get("/api/blogs", { params });
-  return res.data;
-}
-
-export async function getBlogBySlugAPI(slug) {
-  const res = await api.get("/api/blogs/" + slug);
-  return res.data;
-}
-
-export async function sendContactAPI(payload) {
-  const res = await api.post("/api/contact", payload);
-  return res.data;
-}
-
-export async function getRoadmapsAPI() {
-  const res = await api.get("/api/roadmaps");
-  return res.data;
-}
-
-export async function getRoadmapAPI(id) {
-  const res = await api.get("/api/roadmaps/" + id);
-  return res.data;
-}
-
-export async function getMyCoursesAPI() {
-  const res = await api.get("/api/my-courses");
-  return res.data;
-}
-
-export async function getCartAPI() {
-  const res = await api.get("/api/cart");
-  return res.data;
-}
-
-export async function addCartAPI(courseId) {
-  const res = await api.post("/api/cart", { course_id: courseId });
-  return res.data;
-}
-
-export async function removeCartAPI(courseId) {
-  const res = await api.delete("/api/cart/" + courseId);
-  return res.data;
-}
-
-export async function saveProgressAPI(payload) {
-  const res = await api.post("/api/progress", payload);
-  return res.data;
-}
-
-export async function getCourseReviewsAPI(courseId) {
-  const res = await api.get("/api/courses/" + courseId + "/reviews");
-  return res.data;
-}
-
-export async function createPaymentAPI(payload) {
-  const res = await axios.post(PAYMENT_API_BASE + "/api/payments", payload, {
-    headers: authHeaders(),
+  const promise = get(client, url, config).catch((err) => {
+    getCache.delete(key);
+    throw err;
   });
-  return res.data;
+  getCache.set(key, { promise, expires: Date.now() + ttl });
+  return promise;
 }
 
-export async function confirmTestPaymentAPI(paymentId) {
-  const res = await axios.post(
-    PAYMENT_API_BASE + "/api/payments/confirm-test",
-    { payment_id: paymentId },
-    { headers: authHeaders() }
-  );
-  return res.data;
+function clearGetCache() {
+  getCache.clear();
 }
 
-export async function uploadVideoAPI(file) {
+const get = (client, url, config) => responseData(client.get(url, config));
+const post = (client, url, data, config) => responseData(client.post(url, data, config)).then((data) => { clearGetCache(); return data; });
+const put = (client, url, data, config) => responseData(client.put(url, data, config)).then((data) => { clearGetCache(); return data; });
+const patch = (client, url, data, config) => responseData(client.patch(url, data, config)).then((data) => { clearGetCache(); return data; });
+const remove = (client, url, config) => responseData(client.delete(url, config)).then((data) => { clearGetCache(); return data; });
+
+function makeFormData(fields) {
   const formData = new FormData();
-  formData.append("video", file);
-  const res = await axios.post(PAYMENT_API_BASE + "/api/videos/upload", formData, {
-    headers: authHeaders(),
+  Object.entries(fields).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) {
+      formData.append(key, value);
+    }
   });
-  return res.data;
+  return formData;
 }
 
-export async function getPreviewVideoAPI() {
-  const res = await axios.get(PAYMENT_API_BASE + "/api/videos/preview", {
-    headers: authHeaders(),
-  });
-  return res.data;
+const api = createClient(API_BASE);
+const paymentApi = createClient(PAYMENT_API_BASE);
+const mediaApi = createClient(MEDIA_API_BASE);
+const blogApi = createClient(BLOG_API_BASE);
+
+// Auth
+export function loginAPI(email, password, expectedRole) {
+  const payload = { email, password };
+  if (expectedRole) {
+    payload.expected_role = expectedRole;
+  }
+  return post(api, "/api/auth/login", payload);
 }
 
-export async function getSignedVideoAPI(lessonId) {
-  const res = await axios.get(PAYMENT_API_BASE + "/api/video/" + lessonId + "/signed-url", {
-    headers: authHeaders(),
-  });
-  return res.data;
+export function registerAPI(name, email, password) {
+  return post(api, "/api/auth/register", { name, email, password });
 }
 
-export async function validateCouponAPI(code, amount) {
-  const res = await axios.post(
-    PAYMENT_API_BASE + "/api/coupons/validate",
-    { code, amount },
-    { headers: authHeaders() }
-  );
-  return res.data;
+export function getMeAPI() {
+  return get(api, "/api/auth/me");
 }
 
-export async function getPaymentHistoryAPI() {
-  const res = await axios.get(PAYMENT_API_BASE + "/api/payments/history", {
-    headers: authHeaders(),
-  });
-  return res.data;
+export function getProfileAPI() {
+  return get(api, "/api/auth/profile");
 }
 
-export async function uploadLessonVideoAPI(file) {
-  return uploadVideoAPI(file);
+// Courses
+export function getCoursesAPI(params) {
+  if (!params?.manage && !params?.review_status) {
+    return cachedGet(api, "/api/courses", { params });
+  }
+  return get(api, "/api/courses", { params });
 }
 
-function authHeaders() {
-  const token = localStorage.getItem("token");
-  return token ? { Authorization: "Bearer " + token } : {};
+export function getCourseBySlugAPI(slug) {
+  return get(api, "/api/courses/slug/" + slug);
+}
+
+export function getCourseByIdAPI(id) {
+  return get(api, "/api/courses/" + id);
+}
+
+export function createCourseAPI(payload) {
+  return post(api, "/api/courses", payload);
+}
+
+export function updateCourseAPI(id, payload) {
+  return put(api, `/api/courses/${id}`, payload);
+}
+
+export function submitCourseAPI(id) {
+  return patch(api, `/api/courses/${id}/submit`);
+}
+
+export function reviewCourseAPI(id, payload) {
+  return patch(api, `/api/courses/${id}/review`, payload);
+}
+
+export function deleteCourseAPI(id) {
+  return remove(api, `/api/courses/${id}`);
+}
+
+export function createSectionAPI(courseId, payload) {
+  return post(api, `/api/courses/${courseId}/sections`, payload);
+}
+
+export function updateSectionAPI(sectionId, payload) {
+  return put(api, `/api/sections/${sectionId}`, payload);
+}
+
+export function createLessonAPI(sectionId, payload) {
+  return post(api, `/api/sections/${sectionId}/lessons`, payload);
+}
+
+// Categories
+export function getCategoriesAPI() {
+  return cachedGet(api, "/api/categories");
+}
+
+export function getSiteContentSectionAPI(section) {
+  return cachedGet(api, `/api/site-content/${section}`);
+}
+
+export function updateSiteContentSectionAPI(section, payload) {
+  return put(api, `/api/site-content/${section}`, payload);
+}
+
+export function createCategoryAPI(payload) {
+  return post(api, "/api/categories", payload);
+}
+
+export function updateCategoryAPI(id, payload) {
+  return put(api, `/api/categories/${id}`, payload);
+}
+
+export function deleteCategoryAPI(id) {
+  return remove(api, `/api/categories/${id}`);
+}
+
+// Enroll & Lessons
+export function enrollCourseAPI(courseId, paymentId) {
+  const payload = Array.isArray(courseId)
+    ? { course_ids: courseId, payment_id: paymentId }
+    : { course_id: courseId, payment_id: paymentId };
+  return post(api, "/api/enroll", payload);
+}
+
+export function getLessonAPI(lessonId) {
+  return get(api, "/api/lessons/" + lessonId);
+}
+
+export function getLessonCommentsAPI(lessonId) {
+  return get(api, `/api/lessons/${lessonId}/comments`);
+}
+
+export function createLessonCommentAPI(lessonId, content) {
+  return post(api, `/api/lessons/${lessonId}/comments`, { content });
+}
+
+export function getLessonNotesAPI(lessonId) {
+  return get(api, `/api/lessons/${lessonId}/notes`);
+}
+
+export function createLessonNoteAPI(lessonId, payload) {
+  return post(api, `/api/lessons/${lessonId}/notes`, payload);
+}
+
+export function deleteLessonNoteAPI(noteId) {
+  return remove(api, `/api/lesson-notes/${noteId}`);
+}
+
+export function updateLessonAPI(lessonId, payload) {
+  return put(api, "/api/lessons/" + lessonId, payload);
+}
+
+// Blog & Contact
+export function getBlogsAPI(params) {
+  if (!params) {
+    return cachedGet(blogApi, "/api/blogs");
+  }
+  return get(blogApi, "/api/blogs", { params });
+}
+
+export function getBlogBySlugAPI(slug) {
+  return get(blogApi, "/api/blogs/" + slug);
+}
+
+export function sendContactAPI(payload) {
+  return post(blogApi, "/api/contact", payload);
+}
+
+// Roadmaps
+export function getRoadmapsAPI() {
+  return get(api, "/api/roadmaps");
+}
+
+export function getRoadmapAPI(id) {
+  return get(api, "/api/roadmaps/" + id);
+}
+
+export function createRoadmapAPI(payload) {
+  return post(api, "/api/roadmaps", payload);
+}
+
+export function updateRoadmapAPI(id, payload) {
+  return put(api, `/api/roadmaps/${id}`, payload);
+}
+
+export function deleteRoadmapAPI(id) {
+  return remove(api, `/api/roadmaps/${id}`);
+}
+
+// My courses & cart
+export function getMyCoursesAPI() {
+  return get(api, "/api/my-courses");
+}
+
+export function getCartAPI() {
+  return get(api, "/api/cart");
+}
+
+export function addCartAPI(courseId) {
+  return post(api, "/api/cart", { course_id: courseId });
+}
+
+export function removeCartAPI(courseId) {
+  return remove(api, "/api/cart/" + courseId);
+}
+
+export function saveProgressAPI(payload) {
+  return post(api, "/api/progress", payload);
+}
+
+export function downloadCertificateAPI(courseId) {
+  return api.get(`/api/certificate/${courseId}`, { responseType: "blob" }).then((res) => res.data);
+}
+
+// Reviews
+export function getCourseReviewsAPI(courseId) {
+  return get(api, "/api/courses/" + courseId + "/reviews");
+}
+
+export function getReviewsByCourseAPI(courseId) {
+  return get(api, `/api/courses/${courseId}/reviews`);
+}
+
+export function getPublicReviewsAPI() {
+  return cachedGet(api, "/api/reviews");
+}
+
+export function createReviewAPI(payload) {
+  return post(api, "/api/reviews", payload);
+}
+
+export function deleteReviewAPI(reviewId) {
+  return remove(api, `/api/reviews/${reviewId}`);
+}
+
+// Payment
+export function createPaymentAPI(payload) {
+  return post(api, "/api/checkout/pay", payload);
+}
+
+export function syncPaymentAPI(paymentId) {
+  return post(api, `/api/checkout/payments/${paymentId}/sync`, {});
+}
+
+export function getPaymentHistoryAPI() {
+  return get(paymentApi, "/api/payments/history");
+}
+
+export function validateCouponAPI(code, amount) {
+  return post(paymentApi, "/api/coupons/validate", { code, amount });
+}
+
+export function getCouponsAPI() {
+  return get(paymentApi, "/api/coupons");
+}
+
+export function createCouponAPI(payload) {
+  return post(paymentApi, "/api/coupons", payload);
+}
+
+export function updateCouponStatusAPI(couponId, active) {
+  return patch(paymentApi, `/api/coupons/${couponId}/active`, { active });
+}
+
+export function uploadCourseImageAPI(file, folder) {
+  return uploadMediaAPI("/api/images/upload", { image: file, folder });
+}
+
+export function uploadBlogImageAPI(file, folder) {
+  return uploadMediaAPI("/api/images/upload", { image: file, folder: folder || "blogs" });
+}
+
+export function uploadVideoAPI(file, folder) {
+  if (!folder) {
+    throw new Error("Vui lòng nhập thư mục Cloudinary");
+  }
+
+  return uploadMediaAPI("/api/videos/upload", { video: file, folder });
+}
+
+export function deleteVideoAPI(payload) {
+  return remove(mediaApi, "/api/videos/delete", { data: payload });
+}
+
+export function uploadLessonVideoAPI(file, folder) {
+  return uploadVideoAPI(file, folder);
+}
+
+export function uploadAttachmentAPI(file) {
+  return uploadMediaAPI("/api/files/upload", { file });
+}
+
+function uploadMediaAPI(url, fields) {
+  return post(mediaApi, url, makeFormData(fields));
+}
+
+// Admin APIs
+export function getAdminDashboardAPI() {
+  return get(api, "/api/admin/dashboard");
+}
+
+export function getDashboardOverviewAPI() {
+  return get(api, "/api/dashboard");
+}
+
+export function getAdminUsersAPI() {
+  return get(api, "/api/admin/users");
+}
+
+export function updateAdminUserRoleAPI(userId, role) {
+  return put(api, `/api/admin/users/${userId}/role`, { role });
+}
+
+export function updateAdminUserStatusAPI(userId, isActive) {
+  return put(api, `/api/admin/users/${userId}/status`, { is_active: isActive });
+}
+
+export function getAdminOrdersAPI() {
+  return get(api, "/api/admin/orders");
+}
+
+export function getComplaintsAPI(params) {
+  return get(api, "/api/complaints", { params });
+}
+
+export function createComplaintAPI(payload) {
+  return post(api, "/api/complaints", payload);
+}
+
+export function updateComplaintAPI(id, payload) {
+  return patch(api, `/api/complaints/${id}`, payload);
+}
+
+// Admin Blog & Contact
+export function getAdminBlogsAPI() {
+  return get(blogApi, "/api/admin/blogs");
+}
+
+export function createBlogAPI(payload) {
+  return post(blogApi, "/api/admin/blogs", payload);
+}
+
+export function updateBlogAPI(id, payload) {
+  return put(blogApi, `/api/admin/blogs/${id}`, payload);
+}
+
+export function deleteBlogAPI(id) {
+  return remove(blogApi, `/api/admin/blogs/${id}`);
+}
+
+export function getAdminContactsAPI() {
+  return get(blogApi, "/api/admin/contacts");
+}
+
+export function markContactReadAPI(id) {
+  return patch(blogApi, `/api/admin/contacts/${id}/read`, {});
 }
 
 export default api;

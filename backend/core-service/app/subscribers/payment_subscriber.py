@@ -12,7 +12,6 @@ from app.services.enrollment_service import create_enrollments
 logger = logging.getLogger(__name__)
 payment_success_task: asyncio.Task | None = None
 
-
 async def listen_payment_success():
     while True:
         redis = Redis.from_url(settings.redis_url, decode_responses=True)
